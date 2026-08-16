@@ -1,53 +1,54 @@
 # codebase-audit
 
-Agent Skill — whole-repo (or path-scoped) **architecture and maintainability** audit with evidence-backed findings. No patches, no OWASP/SAST pipeline.
+**Multi-host Agent Skill** for whole-repo (or path-scoped) architecture and maintainability audits — evidence-backed findings, no auto-fixes, no OWASP/SAST pipeline.
 
-Works on **macOS, Linux, and Windows** (Python 3 only for scripts; default mode is static).
+Runs on **macOS, Linux, and Windows**. Measurement is **Python 3.10+** scripts; default mode is **static** (no test execution).
 
-## What you get
+## Overview
 
-- Phased audit: map → structure → architecture → security architecture → completeness → report
-- One-shot measurement (`scripts/run.py`) plus drift
-- Project report: `docs/codebase-audit/YYYY-MM-DD.md` + JSON sidecar
-- Cursor extra: Open canvas (same full report). Other tools: md+json is complete
-- Drift across runs via fingerprint (`severity|category|path`), not `CA-NNN` (IDs reset every run)
+The skill drives a phased review: map → structure → architecture → security architecture → completeness → report. Measurement is **one-shot** (`scripts/run.py`); the agent cites script stdout (`path:line`, JSON flags) instead of improvising with `find`, `wc`, or ad-hoc `rg`.
 
-**Not for:** git-diff persona review (`adversarial-reviewer`), vulnerability hunting (`security-check`), or auto-fixes.
+| Delivers | Does not |
+|----------|----------|
+| `docs/codebase-audit/YYYY-MM-DD.md` + JSON sidecar | Apply patches or open PRs |
+| Drift vs previous run (`scripts/drift.py`) | Replace `adversarial-reviewer` (git-diff personas) |
+| Optional `--runtime` test plans (opt-in) | Replace `security-check` (vuln hunting) |
+
+Reports use Turkish labels in chat/markdown (`BLOKE` / `SORUNLU` / `TEMİZ`); the JSON sidecar keeps English enums.
+
+## Supported hosts
+
+One install targets every Agent Skills–compatible host below. **SSOT** (single copy) lives at:
+
+```text
+~/.agents/skills/codebase-audit/     # macOS/Linux
+%USERPROFILE%\.agents\skills\codebase-audit\   # Windows
+```
+
+`install.sh` / `install.ps1` copy into that path, then link per-host directories when they exist and are not already symlinks to `~/.agents/skills`.
+
+| Host | Invoke | Skills path | Installer |
+|------|--------|-------------|-----------|
+| [Cursor](https://cursor.com/docs/skills) | `/codebase-audit`, `/codebase-audit src/api`, `--runtime` | `~/.cursor/skills/` → SSOT (or SSOT only if `~/.cursor/skills` already points at `~/.agents/skills`) | link when `~/.cursor` exists |
+| [Claude Code](https://code.claude.com/docs/en/skills) | same slash pattern | `~/.claude/skills/codebase-audit/` | link when `~/.claude` exists |
+| [Codex](https://learn.chatgpt.com/docs/build-skills) | `$codebase-audit` or `/skills` | reads `~/.agents/skills` directly | copy only — **do not** write `~/.codex/skills` (installer catalog) |
+| [Antigravity](https://antigravity.google/docs/skills) | host slash / skills UI | `~/.gemini/config/skills/codebase-audit/` | link when `~/.gemini/config` exists |
+
+**Not this skill:** Gemini CLI (`~/.gemini/skills`), Antigravity CLI flat slash folder (`~/.gemini/antigravity-cli/skills/`). Antigravity’s Agent Skills path is `~/.gemini/config/skills`, not Gemini CLI.
+
+After install, restart or reload the host so it picks up `SKILL.md`.
 
 ## Requirements
 
-| Need | Required | Notes |
+| Item | Required | Notes |
 |------|----------|--------|
-| Python 3.10+ | yes | `python3`, `python`, or `py -3` |
-| One host below | yes | Agent Skills / `$skill` / slash |
-| Git | optional | secret `tracked` / `ignored` severity |
-| Node / Go / etc. | optional | only for `/codebase-audit --runtime` |
-| `rtk` | optional | if present, prefix script commands with `rtk proxy ` |
-
-### Hosts (user-level install)
-
-`~` = home directory (`%USERPROFILE%` on Windows).
-
-| Host | Official user path | `install.sh` / `install.ps1` |
-|------|--------------------|------------------------------|
-| [Cursor](https://cursor.com/docs/skills) | `~/.agents/skills/` and `~/.cursor/skills/` | copy to agents; link Cursor if `~/.cursor` exists |
-| [Claude Code](https://code.claude.com/docs/en/skills) | `~/.claude/skills/<name>/` | link if `~/.claude` exists |
-| [Codex](https://learn.chatgpt.com/docs/build-skills) | `$HOME/.agents/skills` | copy only — do **not** write `~/.codex/skills` (installer catalog) |
-| [Antigravity](https://antigravity.google/docs/skills) | `~/.gemini/config/skills/<name>/` | link if `~/.gemini/config` exists |
-
-If a host skills directory is already a symlink to `~/.agents/skills`, the extra per-skill link is skipped (does not delete the skill).
-
-**Not installed:** Gemini CLI (`~/.gemini/skills`). Antigravity’s global path lives under `~/.gemini/config/skills` — that folder is Antigravity, not Gemini CLI. Do not put this skill in `~/.gemini/antigravity-cli/skills/` (flat markdown slash files, not Agent Skills folders).
+| Python 3.10+ | yes | `python3`, `python`, or `py -3` on Windows |
+| One supported host above | yes | Agent Skills / slash / `$skill` |
+| Git | optional | `tracked` / `ignored` on secret candidates |
+| Node, Go, Rust, etc. | optional | only if you pass `--runtime` |
+| `rtk` | optional | prefix script commands with `rtk proxy ` when present |
 
 ## Install
-
-### Windows (PowerShell)
-
-```powershell
-git clone https://github.com/batu3384/codebase-audit.git "$env:USERPROFILE\codebase-audit"
-cd "$env:USERPROFILE\codebase-audit"
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
 
 ### macOS / Linux
 
@@ -58,83 +59,114 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Restart the host (or reload the window).
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/batu3384/codebase-audit.git "$env:USERPROFILE\codebase-audit"
+cd "$env:USERPROFILE\codebase-audit"
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Override SSOT parent: `AGENTS_DIR=/path/to/skills ./install.sh` (directory that will contain `codebase-audit/`).
 
 ### Manual
 
-Copy the repo (minus `.git`) to `~/.agents/skills/codebase-audit/` so Cursor and Codex see it. Then, only if that host’s skills dir is a **real directory** (not already a symlink to `~/.agents/skills`):
+1. Copy the repo (without `.git`) to `~/.agents/skills/codebase-audit/`.
+2. If a host’s skills folder is a **real directory** (not already `~/.agents/skills`), symlink:
 
 ```text
-~/.cursor/skills/codebase-audit      →  ~/.agents/skills/codebase-audit
-~/.claude/skills/codebase-audit      →  ~/.agents/skills/codebase-audit
-~/.gemini/config/skills/codebase-audit → ~/.agents/skills/codebase-audit
+~/.cursor/skills/codebase-audit           →  ~/.agents/skills/codebase-audit
+~/.claude/skills/codebase-audit           →  ~/.agents/skills/codebase-audit
+~/.gemini/config/skills/codebase-audit    →  ~/.agents/skills/codebase-audit
 ```
 
-Repo root must contain `SKILL.md`, `references/`, `scripts/`.
+Package root must contain `SKILL.md`, `references/`, `scripts/`.
 
 ## Verify
 
 ```bash
-python3 scripts/self-check.py          # macOS/Linux
+python3 scripts/self-check.py          # macOS / Linux
 python scripts\self-check.py         # Windows
 ```
 
-Expected output: `ok`
+Expected: `ok`
+
+Smoke the bundle (optional):
+
+```bash
+python3 scripts/run.py /path/to/your/project
+```
+
+Exit `0` and compact JSON with keys `inventory`, `docs-check`, `promises`, `import-sample`, `stub-scan`, `runtime-check`.
 
 ## Usage
 
-```
-/codebase-audit
-/codebase-audit src/api
-/codebase-audit --runtime
-```
+Default is **static** — scripts measure the tree; they do not run project tests unless you opt in.
 
-Codex: `$codebase-audit` or `/skills`. Default is **static**. `--runtime` runs allowlisted `class: executable` test plans (never `make`, `curl`, `xcodebuild`, `gradlew`; no OS sandbox).
+| Host | Examples |
+|------|----------|
+| Cursor / Claude Code | `/codebase-audit` · `/codebase-audit packages/api` · `/codebase-audit --runtime` |
+| Codex | `$codebase-audit` · add path or `--runtime` in the skill invocation |
 
-Chat: `Sonuç:` + path to `docs/codebase-audit/<date>.md` (+ `.json`). Canvas link only on Cursor after a canvas is written.
+`--runtime` maps to `run.py --run`: every `class: executable` plan (npm / go / cargo / pytest / swift / dart). Never `make`, `curl`, `xcodebuild`, or `gradlew`. `sandbox: false` — command-shape allowlist, not OS isolation. Child env is an allowlist; stdout/stderr are redacted.
+
+### Reports (all hosts)
+
+Every complete run writes:
+
+- `docs/codebase-audit/YYYY-MM-DD.md` — human report  
+- `docs/codebase-audit/YYYY-MM-DD.json` — findings sidecar (English severity enums)  
+- Drift block from `scripts/drift.py` when a prior sidecar exists  
+
+Same-day collision: `YYYY-MM-DD-HHMM.md` + matching `.json`.
+
+### Optional: Cursor canvas
+
+On **Cursor only**, the agent may also write a `.canvas.tsx` beside the project (full report, same content as markdown). That file is an extra view — **md + json alone are a complete audit** on Claude Code, Codex, Antigravity, and Cursor. Missing canvas is not incomplete.
+
+Canvas path pattern: `~/.cursor/projects/<workspace-slug>/canvases/codebase-audit-YYYY-MM-DD.canvas.tsx`
 
 ## Layout
 
 ```text
 codebase-audit/
-├── SKILL.md
-├── references/          # phase guides (loaded on demand)
-├── scripts/             # measurement + run.py + schema.py + install.py + install_links.py
+├── SKILL.md              # skill contract (hosts load this)
+├── references/           # phase guides (on demand)
+├── scripts/
+│   ├── run.py            # one-shot bundle
+│   ├── schema.py         # child JSON contract
+│   ├── install.py        # SSOT copy + staging
+│   ├── install_links.py  # per-host symlinks
+│   ├── self-check.py     # health checks
+│   ├── check_extra.py    # extended probes
+│   └── …                 # inventory, docs-check, promises, import-sample, stub-scan, runtime-check, drift, walk, paths
 ├── install.sh
 ├── install.ps1
 └── README.md
 ```
 
-## Windows notes
+## Platform notes
 
-- Static audit: full support.
-- `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted (JSON/YAML/quoted/bearer). `class: executable` is not an OS sandbox.
-- `xcodebuild` / Swift / iOS plans are detected but not executed (same on all OS).
-- Canvas files (Cursor): `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
-
-## v1.3.1
-
-Outside/broken symlink manifests are not read (`readable_in_tree`). Every child JSON carries `WalkCover` (`walk_complete`, skip counters). `complete_scan` includes line-count and large-TODO caps. Installer copies in-tree symlinks as links and refuses outside targets; host-link `rmtree` only if `SKILL.md` names this skill. `--home` refuses `/` and `/Users`-style tops (`Path.home()` allowed). Schema checks types, `root` match, and `sandbox: false`. Windows timeout uses `taskkill /T`.
-
-## v1.3.0
-
-Measurement contract: `run.py` validates child JSON schema (exit 2 on missing keys). Walk skips special files (FIFO) and records skip coverage. Runtime class is `executable` (command allowlist, `sandbox: false`); nested package manifests are discovered. Installer stages + swaps and refuses to delete its source. Redaction covers JSON/YAML quoted keys, bearer tokens, and common token shapes (`sk-`, `AKIA`, `ghp_`, `xox`).
-
-## v1.2.0
-
-User-facing report labels in Turkish; JSON sidecar stays English. One-shot compact `run.py`. Canvas is Cursor-only and is not required for a complete audit. Installer links Claude + Antigravity and refuses to delete a skills dir that is already the agents SSOT.
-
-## v1.1.0
-
-Measurement honesty: list/parse caps now set `*_complete: false` instead of silent truncation. Outside-tree symlinks are secret **candidates** (body unread). `run.py` fails closed on unexpected script errors. Drift matches `root` + filename date. `--runtime` env allowlist + output redaction.
+- **Static audit:** full support on all listed OSes.
+- **Windows `--runtime`:** pytest via `sys.executable` (no hardcoded `python3`); timeout cleanup uses `taskkill /T`.
+- **iOS / Xcode:** `xcodebuild` and CocoaPods plans are detected but not executed on any OS.
+- **Untrusted trees:** outside symlinks are not followed; manifest bodies are not read across the trust boundary.
 
 ## Update
 
 ```bash
-cd ~/codebase-audit   # or your clone path
+cd ~/codebase-audit    # or your clone path
 git pull
-./install.sh          # or install.ps1 on Windows
+./install.sh           # or install.ps1 on Windows
 ```
+
+## Changelog
+
+**v1.3.1** — Fail-closed outside symlink manifests; `WalkCover` on every child JSON; installer symlink guards; schema type checks; Windows `taskkill /T`.
+
+**v1.3.0** — Child JSON schema validation; nested package discovery; `executable` runtime class; expanded redaction; staged install.
+
+Earlier: v1.2 (Turkish report face, one-shot `run.py`, multi-host install), v1.1 (truncation honesty, drift `root` match).
 
 ## License
 
