@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from pathlib import Path
+from typing import NamedTuple
 
 from paths import inside
 
@@ -95,8 +97,22 @@ TODO_RE = re.compile(
     r"@available\(\s*\*\s*,\s*unavailable"
 )
 
-SECRETISH = re.compile(
-    r"(?i)(api[_-]?key|secret|token|password|passwd|bearer|authorization)\s*[:=]\s*\S+"
+_SECRET_KEY = r"api[_-]?key|secret|token|password|passwd|bearer|authorization"
+_QUOTED_KV = re.compile(
+    rf'(?i)(["\']?)({_SECRET_KEY})\1\s*[:=]\s*(["\'])(?:\\.|(?!\3).)*\3'
+)
+_AUTH = re.compile(rf"(?i)\b(authorization)\s*[:=]\s*\S+(?:\s+\S+)?")
+_BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-+/=]+")
+_BARE_KV = re.compile(rf"(?i)\b({_SECRET_KEY})\b\s*[:=]\s*\S+")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._\-+/=-]+\b")
+_TOKEN_SHAPE = re.compile(
+    r"(?:"
+    r"\bsk-[A-Za-z0-9_-]{10,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|ghp_[A-Za-z0-9]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}"
+    r"|xox[baprs]-[\w-]{10,}"
+    r")"
 )
 
 LANG_FROM_EXT = {
@@ -216,14 +232,42 @@ ENTRY_RELS = {
 }
 
 MAX_READ_BYTES = 2_000_000
+MAX_LINECOUNT_BYTES = 8_000_000
+MAX_LINECOUNT_LINES = 500_000
+
+
+def redact_secrets(s: str) -> str:
+    """Mask JSON/YAML quoted keys, bearer headers, bare key=value, and known token shapes."""
+    if not s:
+        return ""
+
+    def quoted(m: re.Match[str]) -> str:
+        raw = m.group(0)
+        sep = "=" if re.search(r"=\s*[\"']", raw) else ":"
+        qk, key, qv = m.group(1), m.group(2), m.group(3)
+        return f"{qk}{key}{qk}{sep}{qv}***{qv}"
+
+    s = _QUOTED_KV.sub(quoted, s)
+    s = _AUTH.sub("authorization=***", s)
+    s = _BEARER.sub(r"\1 ***", s)
+    s = _BARE_KV.sub(lambda m: m.group(1) + "=***", s)
+    s = _JWT.sub("***", s)
+    return _TOKEN_SHAPE.sub("***", s)
 
 
 def redact(s: str, *, limit: int = 120) -> str:
-    return SECRETISH.sub(lambda m: m.group(1) + "=***", s)[:limit]
+    return redact_secrets(s)[:limit]
 
 
 def redact_tail(s: str, n: int = 2000) -> str:
-    return SECRETISH.sub(lambda m: m.group(1) + "=***", s or "")[-n:]
+    return redact_secrets(s or "")[-n:]
+
+
+class WalkCover(NamedTuple):
+    files: list[Path]
+    skipped_special: int
+    skipped_symlink_dirs: int
+    skipped_unreadable: int
 
 
 def is_test_file(rel: str, name: str) -> str | None:
@@ -348,10 +392,13 @@ def should_prune_dir(path: Path) -> bool:
     return False
 
 
-def walk_files(root: Path) -> list[Path]:
-    """Pruned file list. Outside/broken symlinks are included as paths; not followed."""
+def walk_tree(root: Path) -> WalkCover:
+    """Pruned file list. Special files skipped. Inside symlink dirs not followed."""
     root = root.resolve()
     out: list[Path] = []
+    skipped_special = 0
+    skipped_symlink_dirs = 0
+    skipped_unreadable = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         base = Path(dirpath)
         keep: list[str] = []
@@ -359,43 +406,88 @@ def walk_files(root: Path) -> list[Path]:
             child = base / d
             if should_prune_dir(child):
                 continue
-            if child.is_symlink():
+            try:
+                st = child.lstat()
+            except OSError:
+                skipped_unreadable += 1
+                continue
+            if stat.S_ISLNK(st.st_mode):
                 try:
-                    real = child.resolve()
+                    resolved = child.resolve()
                 except OSError:
                     out.append(child)
                     continue
-                if not inside(real, root):
+                if not inside(resolved, root):
                     out.append(child)
                     continue
+                skipped_symlink_dirs += 1
+                continue
             keep.append(d)
         dirnames[:] = keep
         for fn in sorted(filenames):
             p = base / fn
-            if p.is_symlink():
+            try:
+                st = p.lstat()
+            except OSError:
+                skipped_unreadable += 1
+                continue
+            if stat.S_ISLNK(st.st_mode):
                 try:
-                    real = p.resolve()
+                    resolved = p.resolve()
                 except OSError:
                     out.append(p)
                     continue
-                if not inside(real, root):
+                if not inside(resolved, root):
                     out.append(p)
                     continue
-            out.append(p)
-    return out
+                try:
+                    rst = resolved.stat()
+                except OSError:
+                    skipped_unreadable += 1
+                    continue
+                if stat.S_ISREG(rst.st_mode):
+                    out.append(p)
+                else:
+                    skipped_special += 1
+                continue
+            if stat.S_ISREG(st.st_mode):
+                out.append(p)
+            else:
+                skipped_special += 1
+    return WalkCover(out, skipped_special, skipped_symlink_dirs, skipped_unreadable)
+
+
+def walk_files(root: Path) -> list[Path]:
+    return walk_tree(root).files
 
 
 def line_count(path: Path) -> int:
     try:
-        with path.open("rb") as f:
-            return sum(1 for _ in f)
+        st = path.lstat()
     except OSError:
         return 0
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        return 0
+    n = 0
+    read = 0
+    try:
+        with path.open("rb") as f:
+            for line in f:
+                read += len(line)
+                n += 1
+                if read > MAX_LINECOUNT_BYTES or n > MAX_LINECOUNT_LINES:
+                    return n
+    except OSError:
+        return 0
+    return n
 
 
 def scan_todo(path: Path, rel: str, nlines: int) -> tuple[int, list[str]]:
     try:
-        if path.stat().st_size > MAX_READ_BYTES:
+        st = path.lstat()
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            return 0, []
+        if st.st_size > MAX_READ_BYTES:
             return 0, []
     except OSError:
         return 0, []

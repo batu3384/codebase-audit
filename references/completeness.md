@@ -33,11 +33,12 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/runtime-check.py"
 | Field | Action |
 |-------|--------|
 | `class: unsafe` or `placeholder` | Major. Quote `body` + `manifest`. Never execute. |
+| `class: executable` | Command-shape allowlist only. Quote `sandbox: false`. |
 | `class: review` | Info: tanınmadı, çalıştırılmadı. Includes `xcodebuild-test`, `gradle-test`, `pod-install`. |
-| `runtime: none` | Info: runtime kanıt yok. Not "works". |
+| `runtime: none` | Info: runtime kanıt yok. Not "works". Nested packages: quote `plans[].package`; `packages_complete: false` → not exhaustive. |
 | `runtime: static-only` | Quote plans in inventory. |
 
-Swift `Package.swift` → `swift-test` class safe. Xcode project without Package.swift → review only (no `--run` execution).
+Swift `Package.swift` → `swift-test` class executable. Xcode project without Package.swift → review only (no `--run` execution).
 
 ### `--runtime` only
 
@@ -47,7 +48,7 @@ Only if the user passed `--runtime` or explicitly asked to run tests. Prefer the
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/runtime-check.py" "$WORKSPACE" "$ROOT" --run --timeout 120
 ```
 
-Runs **every** `class: safe` plan (not only the first). Residual: the test runner loads project config/tests (jest.config, conftest, TestMain, Package.swift tests). Child env is an allowlist (no inherited API keys); stdout/stderr are redacted. Never `make` / `npx` / `xcodebuild` / `gradlew` / unsafe bodies. Nonzero exit → Major (Critical if sole advertised test). Exit 127 → Info, tool yok. Failed run → not CLEAN.
+Runs **every** `class: executable` plan (not only the first; nested package manifests included). Residual: the test runner loads project config/tests (jest.config, conftest, TestMain, Package.swift tests). **No OS sandbox** (`sandbox: false`). Child env is an allowlist (no inherited API keys); stdout/stderr are redacted (JSON/YAML/quoted/bearer). Never `make` / `npx` / `xcodebuild` / `gradlew` / unsafe bodies. Nonzero exit → Major (Critical if sole advertised test). Exit 127 → Info, tool yok. Failed run → not CLEAN.
 
 Default audit: static JSON is enough. Do not hand-run tests.
 

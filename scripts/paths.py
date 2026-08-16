@@ -4,6 +4,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+POSIX_TOP = frozenset({"Users", "home", "private", "Volumes", "etc", "tmp", "var", "root"})
+WIN_TOP = frozenset({"users", "windows", "program files", "program files (x86)"})
+
 
 def inside(child: Path, parent: Path) -> bool:
     child = child.resolve()
@@ -11,11 +14,34 @@ def inside(child: Path, parent: Path) -> bool:
     return child == parent or parent in child.parents
 
 
+def is_fs_root(path: Path) -> bool:
+    """True for POSIX `/`, Windows drive roots (`C:\\`), and UNC share roots."""
+    try:
+        p = path.expanduser().resolve()
+    except OSError:
+        return False
+    return p.parent == p
+
+
+def is_broad_workspace(ws: Path) -> bool:
+    try:
+        ws = ws.expanduser().resolve()
+    except OSError:
+        return True
+    if is_fs_root(ws) or ws == Path.home():
+        return True
+    parent = ws.parent
+    if is_fs_root(parent) and (ws.name in POSIX_TOP or ws.name.lower() in WIN_TOP):
+        return True
+    return False
+
+
 def workspace_ok(ws: Path) -> str | None:
-    ws = ws.resolve()
-    if ws == Path("/") or ws == Path.home():
-        return f"STOP sandbox: workspace too broad: {ws}"
-    if ws.parent == Path("/") and ws.name in {"Users", "home", "private", "Volumes"}:
+    try:
+        ws = ws.expanduser().resolve()
+    except OSError as e:
+        return f"STOP sandbox: workspace unreadable: {ws} ({e})"
+    if is_broad_workspace(ws):
         return f"STOP sandbox: workspace too broad: {ws}"
     return None
 

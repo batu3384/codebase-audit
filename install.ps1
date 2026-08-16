@@ -3,33 +3,31 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = $PSScriptRoot
-$Agents = Join-Path $env:USERPROFILE ".agents\skills\codebase-audit"
 
 function Get-PythonLauncher {
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @{ Name = "python"; Args = @() }
-    }
+    $candidates = @()
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @{ Name = "py"; Args = @("-3") }
+        $candidates += @{ Name = "py"; Args = @("-3") }
     }
-    throw "Python 3 not found. Install from https://www.python.org/downloads/ and retry."
-}
-
-New-Item -ItemType Directory -Force -Path (Split-Path $Agents) | Out-Null
-
-if (Test-Path $Agents) {
-    Remove-Item -Recurse -Force $Agents
-}
-New-Item -ItemType Directory -Force -Path $Agents | Out-Null
-Get-ChildItem -Path $RepoRoot -Force | Where-Object { $_.Name -ne ".git" } | ForEach-Object {
-    Copy-Item -Path $_.FullName -Destination $Agents -Recurse -Force
+    if (Get-Command python3 -ErrorAction SilentlyContinue) {
+        $candidates += @{ Name = "python3"; Args = @() }
+    }
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $candidates += @{ Name = "python"; Args = @() }
+    }
+    foreach ($c in $candidates) {
+        & $c.Name @($c.Args + @("-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"))
+        if ($LASTEXITCODE -eq 0) {
+            return $c
+        }
+    }
+    throw "Python 3.10+ not found. Install from https://www.python.org/downloads/ and retry."
 }
 
 $py = Get-PythonLauncher
-& $py.Name @($py.Args + @((Join-Path $Agents "scripts\install_links.py"), "--agents", $Agents))
-& $py.Name @($py.Args + @((Join-Path $Agents "scripts\self-check.py")))
-
-Write-Host "Installed: $Agents"
-Write-Host "Codex reads %USERPROFILE%\.agents\skills (no extra link)."
-Write-Host "Skipped on purpose: .gemini\skills (Gemini CLI), .codex\skills (catalog)."
-Write-Host "On Windows, ~ in docs means %USERPROFILE%."
+$installArgs = @((Join-Path $RepoRoot "scripts\install.py"), "--repo", $RepoRoot)
+if ($env:AGENTS_DIR) {
+    $installArgs += @("--agents-dir", $env:AGENTS_DIR)
+}
+& $py.Name @($py.Args + $installArgs)
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

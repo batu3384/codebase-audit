@@ -22,7 +22,7 @@ from walk import (
     scan_todo,
     test_pair_stem,
     todo_scanable,
-    walk_files,
+    walk_tree,
 )
 
 
@@ -127,7 +127,8 @@ def main() -> int:
     ws, root = require_inside(args.workspace, args.root)
 
     has_git = git_probe(ws)
-    files = walk_files(root)
+    cover = walk_tree(root)
+    files = cover.files
     secrets: list[dict] = []
     docs: list[str] = []
     sources: list[tuple[int, str, str]] = []
@@ -232,6 +233,14 @@ def main() -> int:
         "entrypoints": entrypoints[:40],
         "generated_excluded_from_top": True,
         "complete_todo_list": False,
+        "skipped_special": cover.skipped_special,
+        "skipped_symlink_dirs": cover.skipped_symlink_dirs,
+        "skipped_unreadable": cover.skipped_unreadable,
+        "complete_scan": (
+            cover.skipped_special == 0
+            and cover.skipped_unreadable == 0
+            and cover.skipped_symlink_dirs == 0
+        ),
     }
     print(json.dumps(out, indent=2))
     return 0

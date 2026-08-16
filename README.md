@@ -89,7 +89,7 @@ Expected output: `ok`
 /codebase-audit --runtime
 ```
 
-Codex: `$codebase-audit` or `/skills`. Default is **static**. `--runtime` runs allowlisted safe test plans (never `make`, `curl`, `xcodebuild`, `gradlew`).
+Codex: `$codebase-audit` or `/skills`. Default is **static**. `--runtime` runs allowlisted `class: executable` test plans (never `make`, `curl`, `xcodebuild`, `gradlew`; no OS sandbox).
 
 Chat: `Sonuç:` + path to `docs/codebase-audit/<date>.md` (+ `.json`). Canvas link only on Cursor after a canvas is written.
 
@@ -108,9 +108,13 @@ codebase-audit/
 ## Windows notes
 
 - Static audit: full support.
-- `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted.
+- `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted (JSON/YAML/quoted/bearer). `class: executable` is not an OS sandbox.
 - `xcodebuild` / Swift / iOS plans are detected but not executed (same on all OS).
 - Canvas files (Cursor): `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
+
+## v1.3.0
+
+Measurement contract: `run.py` validates child JSON schema (exit 2 on missing keys). Walk skips special files (FIFO) and records skip coverage. Runtime class is `executable` (command allowlist, `sandbox: false`); nested package manifests are discovered. Installer stages + swaps and refuses to delete its source. Redaction covers JSON/YAML quoted keys, bearer tokens, and common token shapes (`sk-`, `AKIA`, `ghp_`, `xox`).
 
 ## v1.2.0
 

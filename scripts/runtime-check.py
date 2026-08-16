@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Static + optional safe runtime checks. Never runs make, curl, npx, or unknown scripts."""
+"""Static + optional executable runtime checks. Command-shape allowlist; no OS sandbox."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from paths import require_inside
-from walk import find_xcode_bundles, redact_tail
+from walk import PACKAGE_MARKERS, find_xcode_bundles, redact_tail, walk_files
 
 UNSAFE_SHELL = re.compile(
     r"[|&;`$(){}><]|"
@@ -31,6 +32,29 @@ SAFE_NPM_TEST = re.compile(
 
 SAFE_PYTEST = re.compile(r"^(python3?\s+-m\s+)?pytest([\s].*)?$", re.I)
 
+MAX_PACKAGES = 40
+EXECUTABLE = "executable"
+
+CHILD_ENV_KEEP = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMDATA",
+)
+
 
 def classify_script(body: str) -> str:
     b = " ".join(body.strip().split())
@@ -39,11 +63,11 @@ def classify_script(body: str) -> str:
     if UNSAFE_SHELL.search(b):
         return "unsafe"
     if SAFE_NPM_TEST.match(b) or SAFE_PYTEST.match(b):
-        return "safe"
+        return EXECUTABLE
     if re.match(r"^go\s+test\b", b, re.I):
-        return "safe"
+        return EXECUTABLE
     if re.match(r"^cargo\s+test\b", b, re.I):
-        return "safe"
+        return EXECUTABLE
     return "review"
 
 
@@ -103,27 +127,6 @@ def read_make_recipe(makefile: Path, target: str) -> str | None:
     return " && ".join(recipe) if recipe else None
 
 
-CHILD_ENV_KEEP = (
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TERM",
-    "TMPDIR",
-    "TEMP",
-    "TMP",
-    "SystemRoot",
-    "WINDIR",
-    "COMSPEC",
-    "PATHEXT",
-    "PROGRAMFILES",
-    "PROGRAMDATA",
-)
-
-
 def child_env() -> dict[str, str]:
     env = {k: os.environ[k] for k in CHILD_ENV_KEEP if k in os.environ}
     env["CI"] = "1"
@@ -135,70 +138,153 @@ def pytest_cmd() -> list[str]:
     return [sys.executable, "-m", "pytest", "-q"]
 
 
-def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
+def kill_group(proc: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        proc.kill()
+        return
     try:
-        r = subprocess.run(
-            cmd,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=child_env(),
-        )
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
+    kwargs: dict = {
+        "cwd": cwd,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "env": child_env(),
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(cmd, **kwargs)
+    except FileNotFoundError:
+        return {"cmd": cmd, "exit": 127, "error": "tooling missing", "cwd": str(cwd)}
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_group(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
         return {
             "cmd": cmd,
-            "exit": r.returncode,
-            "stdout_tail": redact_tail(r.stdout or "", 2000),
-            "stderr_tail": redact_tail(r.stderr or "", 2000),
+            "cwd": str(cwd),
+            "exit": 124,
+            "error": "timeout",
+            "stdout_tail": redact_tail(stdout or "", 2000),
+            "stderr_tail": redact_tail(stderr or "", 2000),
         }
-    except subprocess.TimeoutExpired:
-        return {"cmd": cmd, "exit": 124, "error": "timeout"}
-    except FileNotFoundError:
-        return {"cmd": cmd, "exit": 127, "error": "tooling missing"}
+    return {
+        "cmd": cmd,
+        "cwd": str(cwd),
+        "exit": proc.returncode,
+        "stdout_tail": redact_tail(stdout or "", 2000),
+        "stderr_tail": redact_tail(stderr or "", 2000),
+    }
 
 
-def detect(root: Path) -> list[dict]:
+def package_roots(root: Path) -> tuple[list[Path], bool]:
+    found = [root]
+    seen = {root.resolve()}
+    complete = True
+    for p in walk_files(root):
+        if p.name not in PACKAGE_MARKERS:
+            continue
+        d = p.parent
+        rd = d.resolve()
+        if rd in seen:
+            continue
+        if len(found) >= MAX_PACKAGES:
+            complete = False
+            break
+        seen.add(rd)
+        found.append(d)
+    return found, complete
+
+
+def pkg_rel(pkg: Path, root: Path) -> str:
+    if pkg.resolve() == root.resolve():
+        return "."
+    return str(pkg.relative_to(root))
+
+
+def detect_at(pkg: Path, root: Path) -> list[dict]:
     plans: list[dict] = []
-    pkg = root / "package.json"
-    if pkg.is_file():
+    rel = pkg_rel(pkg, root)
+    pkg_json = pkg / "package.json"
+    if pkg_json.is_file():
         try:
-            data = json.loads(pkg.read_text(encoding="utf-8"))
+            data = json.loads(pkg_json.read_text(encoding="utf-8"))
             test = (data.get("scripts") or {}).get("test")
             if test:
                 plans.append(
                     {
                         "kind": "npm-test",
-                        "manifest": str(pkg),
+                        "manifest": str(pkg_json),
                         "body": test,
                         "class": classify_script(test),
+                        "package": rel,
+                        "cwd": str(pkg),
                     }
                 )
         except json.JSONDecodeError:
             plans.append(
                 {
                     "kind": "npm-test",
-                    "manifest": str(pkg),
+                    "manifest": str(pkg_json),
                     "error": "invalid json",
                     "class": "review",
+                    "package": rel,
+                    "cwd": str(pkg),
                 }
             )
 
-    if (root / "go.mod").is_file():
-        plans.append({"kind": "go-test", "body": "go test ./...", "class": "safe"})
-
-    if (root / "Cargo.toml").is_file():
-        plans.append({"kind": "cargo-test", "body": "cargo test", "class": "safe"})
-
-    if python_project(root) and pytest_evidence(root):
+    if (pkg / "go.mod").is_file():
         plans.append(
             {
-                "kind": "pytest",
-                "body": "python3 -m pytest -q",
-                "class": "safe",
+                "kind": "go-test",
+                "manifest": str(pkg / "go.mod"),
+                "body": "go test ./...",
+                "class": EXECUTABLE,
+                "package": rel,
+                "cwd": str(pkg),
             }
         )
 
-    makefile = root / "Makefile"
+    if (pkg / "Cargo.toml").is_file():
+        plans.append(
+            {
+                "kind": "cargo-test",
+                "manifest": str(pkg / "Cargo.toml"),
+                "body": "cargo test",
+                "class": EXECUTABLE,
+                "package": rel,
+                "cwd": str(pkg),
+            }
+        )
+
+    if python_project(pkg) and pytest_evidence(pkg):
+        plans.append(
+            {
+                "kind": "pytest",
+                "manifest": str(pkg),
+                "body": "python3 -m pytest -q",
+                "class": EXECUTABLE,
+                "package": rel,
+                "cwd": str(pkg),
+            }
+        )
+
+    makefile = pkg / "Makefile"
     if makefile.is_file():
         for target in ("test", "lint", "check"):
             body = read_make_recipe(makefile, target)
@@ -209,106 +295,151 @@ def detect(root: Path) -> list[dict]:
                         "manifest": str(makefile),
                         "body": body,
                         "class": classify_script(body),
+                        "package": rel,
+                        "cwd": str(pkg),
                     }
                 )
 
-    if (root / "Package.swift").is_file():
-        plans.append({"kind": "swift-test", "body": "swift test", "class": "safe"})
-
-    if (root / "pubspec.yaml").is_file():
-        plans.append({"kind": "dart-test", "body": "dart test", "class": "safe"})
-
-    xcode = find_xcode_bundles(root)
-    if xcode:
+    if (pkg / "Package.swift").is_file():
         plans.append(
             {
-                "kind": "xcodebuild-test",
-                "manifest": str(root / xcode[0]),
-                "body": "xcodebuild test",
-                "class": "review",
-                "note": "simulator/signing; not executed even with --run",
+                "kind": "swift-test",
+                "manifest": str(pkg / "Package.swift"),
+                "body": "swift test",
+                "class": EXECUTABLE,
+                "package": rel,
+                "cwd": str(pkg),
             }
         )
 
-    if (root / "Podfile").is_file():
+    if (pkg / "pubspec.yaml").is_file():
         plans.append(
             {
-                "kind": "pod-install",
-                "manifest": str(root / "Podfile"),
-                "body": "pod install",
-                "class": "review",
-                "note": "CocoaPods network; not executed",
+                "kind": "dart-test",
+                "manifest": str(pkg / "pubspec.yaml"),
+                "body": "dart test",
+                "class": EXECUTABLE,
+                "package": rel,
+                "cwd": str(pkg),
             }
         )
 
-    gradlew = root / "gradlew"
-    if gradlew.is_file():
-        plans.append(
-            {
-                "kind": "gradle-test",
-                "manifest": str(gradlew),
-                "body": "./gradlew test",
-                "class": "review",
-                "note": "wrapper is project code; not executed",
-            }
-        )
+    if pkg.resolve() == root.resolve():
+        xcode = find_xcode_bundles(root)
+        if xcode:
+            plans.append(
+                {
+                    "kind": "xcodebuild-test",
+                    "manifest": str(root / xcode[0]),
+                    "body": "xcodebuild test",
+                    "class": "review",
+                    "note": "simulator/signing; not executed even with --run",
+                    "package": ".",
+                    "cwd": str(root),
+                }
+            )
+
+        if (root / "Podfile").is_file():
+            plans.append(
+                {
+                    "kind": "pod-install",
+                    "manifest": str(root / "Podfile"),
+                    "body": "pod install",
+                    "class": "review",
+                    "note": "CocoaPods network; not executed",
+                    "package": ".",
+                    "cwd": str(root),
+                }
+            )
+
+        gradlew = root / "gradlew"
+        if gradlew.is_file():
+            plans.append(
+                {
+                    "kind": "gradle-test",
+                    "manifest": str(gradlew),
+                    "body": "./gradlew test",
+                    "class": "review",
+                    "note": "wrapper is project code; not executed",
+                    "package": ".",
+                    "cwd": str(root),
+                }
+            )
 
     return plans
 
 
-def execute_plan(plan: dict, root: Path, timeout: int) -> dict:
-    if plan.get("class") != "safe":
-        return {"skipped": True, "reason": f"class={plan.get('class')}"}
+def detect(root: Path) -> tuple[list[dict], bool]:
+    roots, complete = package_roots(root)
+    plans: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for pkg in roots:
+        for pl in detect_at(pkg, root):
+            key = (str(pl.get("kind")), str(pl.get("manifest") or pl.get("cwd")))
+            if key in seen:
+                continue
+            seen.add(key)
+            plans.append(pl)
+    return plans, complete
+
+
+def execute_plan(plan: dict, timeout: int) -> dict:
+    cwd = Path(plan.get("cwd") or plan.get("manifest") or ".")
+    if plan.get("class") != EXECUTABLE:
+        return {"skipped": True, "reason": f"class={plan.get('class')}", "cwd": str(cwd)}
 
     kind = plan["kind"]
     if kind.startswith("make-"):
-        # Never invoke make (includes / overrides). Map recipe to a direct binary if exact.
         body = " ".join((plan.get("body") or "").split())
         if re.match(r"^go\s+test\b", body, re.I):
-            return run_cmd(["go", "test", "./..."], root, timeout)
+            return run_cmd(["go", "test", "./..."], cwd, timeout)
         if SAFE_PYTEST.match(body):
-            return run_cmd(pytest_cmd(), root, timeout)
+            return run_cmd(pytest_cmd(), cwd, timeout)
         if re.match(r"^cargo\s+test\b", body, re.I):
-            return run_cmd(["cargo", "test", "--offline"], root, timeout)
-        return {"skipped": True, "reason": "make never executed"}
+            return run_cmd(["cargo", "test", "--offline"], cwd, timeout)
+        return {"skipped": True, "reason": "make never executed", "cwd": str(cwd)}
 
     if kind == "npm-test":
-        if (root / "pnpm-lock.yaml").is_file():
+        if (cwd / "pnpm-lock.yaml").is_file():
             cmd = ["pnpm", "test", "--ignore-scripts"]
-        elif (root / "yarn.lock").is_file():
+        elif (cwd / "yarn.lock").is_file():
             cmd = ["yarn", "test", "--ignore-scripts"]
         else:
             cmd = ["npm", "test", "--ignore-scripts"]
-        return run_cmd(cmd, root, timeout)
+        return run_cmd(cmd, cwd, timeout)
     if kind == "go-test":
-        return run_cmd(["go", "test", "./..."], root, timeout)
+        return run_cmd(["go", "test", "./..."], cwd, timeout)
     if kind == "cargo-test":
-        return run_cmd(["cargo", "test", "--offline"], root, timeout)
+        return run_cmd(["cargo", "test", "--offline"], cwd, timeout)
     if kind == "pytest":
-        return run_cmd(pytest_cmd(), root, timeout)
+        return run_cmd(pytest_cmd(), cwd, timeout)
     if kind == "swift-test":
-        return run_cmd(["swift", "test"], root, timeout)
+        return run_cmd(["swift", "test"], cwd, timeout)
     if kind == "dart-test":
-        return run_cmd(["dart", "test"], root, timeout)
-    return {"skipped": True, "reason": "unknown kind"}
+        return run_cmd(["dart", "test"], cwd, timeout)
+    return {"skipped": True, "reason": "unknown kind", "cwd": str(cwd)}
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="codebase-audit runtime (static default)")
     p.add_argument("workspace", type=Path)
     p.add_argument("root", type=Path)
-    p.add_argument("--run", action="store_true", help="execute all class=safe plans (never make)")
+    p.add_argument("--run", action="store_true", help="execute all class=executable plans (never make)")
     p.add_argument("--timeout", type=int, default=120)
     args = p.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
-    plans = detect(root)
+    plans, packages_complete = detect(root)
     out: dict = {
         "root": str(root),
         "mode": "run" if args.run else "static",
+        "sandbox": False,
+        "packages_complete": packages_complete,
         "runtime_note": (
-            "--run executes the project's test runner (jest.config, conftest.py, "
-            "TestMain). Child env is an allowlist (no inherited API keys). Opt-in only."
+            "class=executable is a command-shape allowlist, not an OS sandbox "
+            "(no network/filesystem isolation). --run executes the project's test "
+            "runner (jest.config, conftest.py, TestMain). Child env is an allowlist. "
+            "stdout/stderr are redacted (JSON/YAML/bearer). Opt-in only."
         ),
         "plans": plans,
     }
@@ -334,32 +465,35 @@ def main() -> int:
         queue = [
             pl
             for pl in plans
-            if pl.get("class") == "safe" and not str(pl.get("kind", "")).startswith("make-")
+            if pl.get("class") == EXECUTABLE and not str(pl.get("kind", "")).startswith("make-")
         ]
-        have = {pl.get("kind") for pl in queue}
+        have = {(pl.get("kind"), pl.get("cwd")) for pl in queue}
         for pl in plans:
-            if pl.get("class") != "safe" or not str(pl.get("kind", "")).startswith("make-"):
+            if pl.get("class") != EXECUTABLE or not str(pl.get("kind", "")).startswith("make-"):
                 continue
             body = " ".join((pl.get("body") or "").split())
-            if re.match(r"^go\s+test\b", body, re.I) and "go-test" in have:
+            cwd = pl.get("cwd")
+            if re.match(r"^go\s+test\b", body, re.I) and ("go-test", cwd) in have:
                 continue
-            if SAFE_PYTEST.match(body) and "pytest" in have:
+            if SAFE_PYTEST.match(body) and ("pytest", cwd) in have:
                 continue
-            if re.match(r"^cargo\s+test\b", body, re.I) and "cargo-test" in have:
+            if re.match(r"^cargo\s+test\b", body, re.I) and ("cargo-test", cwd) in have:
                 continue
             queue.append(pl)
         executed: list[dict] = []
         remaining = args.timeout
         for pl in queue:
             if remaining <= 0:
-                executed.append({"skipped": True, "reason": "timeout budget", "kind": pl.get("kind")})
+                executed.append(
+                    {"skipped": True, "reason": "timeout budget", "kind": pl.get("kind")}
+                )
                 continue
             t0 = time.monotonic()
-            executed.append(execute_plan(pl, root, remaining))
+            executed.append(execute_plan(pl, remaining))
             remaining = max(0, remaining - int(time.monotonic() - t0))
         out["executed"] = executed
         if not queue:
-            out["executed"] = [{"skipped": True, "reason": "no safe plan"}]
+            out["executed"] = [{"skipped": True, "reason": "no executable plan"}]
             if review:
                 out["executed"][0]["reason"] = "only review-class scripts; not executed"
     else:

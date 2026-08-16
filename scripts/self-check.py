@@ -147,8 +147,8 @@ def main() -> int:
         proj.mkdir()
         (proj / "package.json").write_text('{"scripts":{"test":"jest --runInBand"}}')
         r = run([PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj)])
-        if '"class": "safe"' not in r.stdout:
-            errors.append("jest should classify safe")
+        if '"class": "executable"' not in r.stdout:
+            errors.append("jest should classify executable")
 
     with tempfile.TemporaryDirectory() as td:
         proj = Path(td) / "both"
@@ -170,7 +170,7 @@ def main() -> int:
         has_go = any(c[:1] == ("go",) for c in cmds)
         has_npm = any(c[:1] in {("npm",), ("pnpm",), ("yarn",)} for c in cmds)
         if not (has_go and has_npm):
-            errors.append(f"--run must execute all safe plans, cmds={cmds}")
+            errors.append(f"--run must execute all executable plans, cmds={cmds}")
 
     with tempfile.TemporaryDirectory() as td:
         proj = Path(td) / "mk"
@@ -831,6 +831,133 @@ def main() -> int:
             errors.append("install_links must not create Gemini CLI ~/.gemini/skills")
         if (home / ".codex" / "skills").exists():
             errors.append("install_links must not write ~/.codex/skills")
+
+    from paths import is_broad_workspace, is_fs_root
+    from schema import validate_child
+    from walk import redact_secrets
+
+    if not is_fs_root(Path("/")):
+        errors.append("is_fs_root(/) should be true")
+    if Path("/Users").is_dir() and not is_broad_workspace(Path("/Users")):
+        errors.append("/Users should be a broad workspace")
+    if validate_child("inventory", {"root": "."}) is None:
+        errors.append("schema should reject incomplete inventory")
+    quoted = redact_secrets('"apiKey": "sk-live-abcdef"')
+    if "sk-live-abcdef" in quoted:
+        errors.append(f"quoted JSON secret not redacted: {quoted}")
+    bearer = redact_secrets("Authorization: Bearer eyJhbGciOi.payload.sig")
+    if "eyJhbGciOi" in bearer or "payload.sig" in bearer:
+        errors.append(f"bearer token not redacted: {bearer}")
+    if "supersecret" in redact_secrets("password=supersecret"):
+        errors.append("bare password= not redacted")
+    for raw in (
+        "printed sk-live-abcdef1234",
+        "AKIAAAAAAAAAAAAAAAAA",
+        "ghp_" + ("a" * 20),
+        "xoxb-1234567890-abcdefghij",
+    ):
+        red = redact_secrets(raw)
+        if any(x in red for x in ("sk-live-abcdef1234", "AKIAAAAAAAAAAAAAAAAA", "ghp_aaaa", "xoxb-1234567890")):
+            errors.append(f"token shape not redacted: {raw} -> {red}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "nestedpkg"
+        proj.mkdir()
+        api = proj / "packages" / "api"
+        api.mkdir(parents=True)
+        (api / "package.json").write_text('{"scripts":{"test":"jest"}}')
+        r = run([PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("sandbox") is not False:
+            errors.append(f"runtime-check sandbox should be false, got {data.get('sandbox')}")
+        manifests = [p.get("manifest", "") for p in data.get("plans") or []]
+        if not any(str(api / "package.json") in m or m.endswith("packages/api/package.json") for m in manifests):
+            errors.append(f"nested package.json plan missing, plans={data.get('plans')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "docsph"
+        proj.mkdir()
+        (proj / "README.md").write_text("`docs/codebase-audit/YYYY-MM-DD.md`\n`src/ghost.ts`\n")
+        r = run([PY, str(SCRIPTS / "docs-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        promised = [x.get("path") for x in data.get("promised_missing") or []]
+        if any("YYYY-MM-DD" in (p or "") for p in promised):
+            errors.append(f"placeholder path should not be promised_missing, got {promised}")
+        if "src/ghost.ts" not in promised:
+            errors.append(f"docs-check missed src/ghost.ts, got {promised}")
+        if "promised_missing_complete" not in data:
+            errors.append("docs-check missing promised_missing_complete")
+
+    if os.name != "nt":
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "fifo"
+            proj.mkdir()
+            (proj / "ok.py").write_text("x=1\n")
+            os.mkfifo(proj / "hang.fifo")
+            r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+            data = json.loads(r.stdout)
+            if data.get("skipped_special", 0) < 1:
+                errors.append(f"FIFO should set skipped_special, got {data}")
+            if any("hang.fifo" in x.get("path", "") for x in data.get("top_by_lines") or []):
+                errors.append("FIFO must not be line-counted")
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td) / "src" / "codebase-audit"
+        (repo / "references").mkdir(parents=True)
+        (repo / "scripts").mkdir()
+        (repo / "SKILL.md").write_text("x\n")
+        (repo / "references" / "keep.md").write_text("x\n")
+        (repo / "scripts" / "keep.py").write_text("x=1\n")
+        dest_parent = Path(td) / "skills"
+        r = run(
+            [
+                PY,
+                str(SCRIPTS / "install.py"),
+                "--repo",
+                str(repo),
+                "--agents-dir",
+                str(dest_parent),
+                "--skip-self-check",
+                "--skip-links",
+            ]
+        )
+        if r.returncode != 0:
+            errors.append(f"install.py failed: {r.stderr or r.stdout}")
+        installed = dest_parent / "codebase-audit" / "SKILL.md"
+        if not installed.is_file():
+            errors.append("install.py did not copy SKILL.md")
+        if not (repo / "SKILL.md").is_file():
+            errors.append("install.py deleted source")
+        r2 = run(
+            [
+                PY,
+                str(SCRIPTS / "install.py"),
+                "--repo",
+                str(repo),
+                "--agents-dir",
+                str(repo.parent),
+                "--skip-self-check",
+                "--skip-links",
+            ]
+        )
+        if r2.returncode != 0:
+            errors.append(f"in-place install failed: {r2.stderr or r2.stdout}")
+        if (repo / "SKILL.md").read_text() != "x\n":
+            errors.append("in-place install mutated source")
+        r3 = run(
+            [
+                PY,
+                str(SCRIPTS / "install.py"),
+                "--repo",
+                str(repo),
+                "--agents-dir",
+                "/",
+                "--skip-self-check",
+                "--skip-links",
+            ]
+        )
+        if r3.returncode != 2:
+            errors.append(f"install.py / should exit 2, got {r3.returncode} {r3.stderr}")
 
     if errors:
         print("; ".join(errors))

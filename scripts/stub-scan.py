@@ -60,6 +60,8 @@ def main() -> int:
             s = line.strip()
             if not s or s.startswith("#") and not s.startswith("#warning"):
                 continue
+            if re.match(r'r["\']', s) or "re.compile(" in line:
+                continue
             for rx, tag in PATTERNS:
                 if not rx.search(line):
                     continue

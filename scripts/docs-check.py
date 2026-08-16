@@ -15,6 +15,7 @@ BACKTICK_PATH = re.compile(
     r"`((?:[A-Za-z0-9_.-]+/)+\.?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`"
 )
 SKIP_LINK = re.compile(r"^(https?://|mailto:|tel:|#|\{)")
+PLACEHOLDER_PATH = re.compile(r"YYYY|MM-DD|<[^>]+>|\{[^}]+\}")
 
 
 def clean_href(raw: str) -> str:
@@ -33,23 +34,32 @@ def main() -> int:
 
     broken: list[dict] = []
     promised_missing: list[dict] = []
-    md_count = 0
+    md_seen = 0
+    md_scanned = 0
     link_count = 0
+    skipped_large = 0
+    unreadable = 0
+    md_cap = False
+    promised_cap = False
 
     for p in walk_files(root):
         if resolved_is_secret(p, root) or is_generated(p.name):
             continue
         if not (p.name.startswith("README") or p.suffix.lower() == ".md"):
             continue
-        md_count += 1
-        if md_count > 200:
+        md_seen += 1
+        if md_seen > 200:
+            md_cap = True
             break
         try:
             if p.stat().st_size > MAX_READ_BYTES:
+                skipped_large += 1
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            unreadable += 1
             continue
+        md_scanned += 1
         rel = str(p.relative_to(root))
         for m in MD_LINK.finditer(text):
             raw = m.group(1).strip()
@@ -77,18 +87,27 @@ def main() -> int:
                 spec = m.group(1)
                 if "://" in spec or spec.startswith("www."):
                     continue
+                if PLACEHOLDER_PATH.search(spec):
+                    continue
                 if not (root / spec).exists():
                     promised_missing.append({"from": rel, "path": spec})
                     if len(promised_missing) >= 20:
+                        promised_cap = True
                         break
 
+    promised_complete = (not promised_cap) and skipped_large == 0 and unreadable == 0
     out = {
         "root": str(root),
-        "md_files_scanned": md_count,
+        "md_files_seen": md_seen,
+        "md_files_scanned": md_scanned,
         "link_count": link_count,
         "broken_links": broken,
         "promised_missing": promised_missing,
-        "truncated": md_count > 200 or len(broken) >= 40,
+        "promised_missing_count": len(promised_missing),
+        "promised_missing_complete": promised_complete,
+        "skipped_large": skipped_large,
+        "unreadable": unreadable,
+        "truncated": md_cap or len(broken) >= 40 or promised_cap or skipped_large > 0,
         "note": "in-repo relative links + README backtick paths; no NLP feature list",
     }
     print(json.dumps(out, indent=2))
