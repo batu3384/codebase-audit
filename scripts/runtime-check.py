@@ -15,6 +15,7 @@ from pathlib import Path
 from paths import require_inside
 from walk import (
     PACKAGE_MARKERS,
+    bounded_read_text,
     coverage_json,
     find_xcode_bundles,
     readable_in_tree,
@@ -105,9 +106,8 @@ def pytest_evidence(pkg: Path, tree: Path) -> bool:
     if readable_in_tree(pkg / "pytest.ini", tree) or readable_in_tree(pkg / "conftest.py", tree):
         return True
     pyproject = pkg / "pyproject.toml"
-    if readable_in_tree(pyproject, tree) and "[tool.pytest" in pyproject.read_text(
-        encoding="utf-8", errors="replace"
-    ):
+    read = bounded_read_text(pyproject, tree)
+    if read.text and "[tool.pytest" in read.text:
         return True
     tests = pkg / "tests"
     if tests.is_dir() and any(readable_in_tree(p, tree) for p in tests.rglob("*.py")):
@@ -120,9 +120,10 @@ def pytest_evidence(pkg: Path, tree: Path) -> bool:
 
 
 def read_make_recipe(makefile: Path, target: str, tree: Path) -> str | None:
-    if not readable_in_tree(makefile, tree):
+    read = bounded_read_text(makefile, tree)
+    if not read.text:
         return None
-    lines = makefile.read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = read.text.splitlines()
     collecting = False
     recipe: list[str] = []
     for line in lines:
@@ -250,62 +251,86 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
     rel = pkg_rel(pkg, root)
     pkg_json = pkg / "package.json"
     if readable_in_tree(pkg_json, root):
-        try:
-            data = json.loads(pkg_json.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = None
-        if not isinstance(data, dict):
+        read = bounded_read_text(pkg_json, root)
+        if read.skip_reason == "large":
             plans.append(
                 {
                     "kind": "npm-test",
                     "manifest": str(pkg_json),
-                    "error": "invalid manifest",
+                    "error": "manifest too large",
+                    "class": "review",
+                    "package": rel,
+                    "cwd": str(pkg),
+                }
+            )
+        elif read.skip_reason or not read.text:
+            plans.append(
+                {
+                    "kind": "npm-test",
+                    "manifest": str(pkg_json),
+                    "error": "unreadable manifest",
                     "class": "review",
                     "package": rel,
                     "cwd": str(pkg),
                 }
             )
         else:
-            scripts = data.get("scripts")
-            if scripts is None:
-                pass
-            elif not isinstance(scripts, dict):
+            try:
+                data = json.loads(read.text)
+            except json.JSONDecodeError:
+                data = None
+            if not isinstance(data, dict):
                 plans.append(
                     {
                         "kind": "npm-test",
                         "manifest": str(pkg_json),
-                        "error": "invalid scripts shape",
+                        "error": "invalid manifest",
                         "class": "review",
                         "package": rel,
                         "cwd": str(pkg),
                     }
                 )
             else:
-                test = scripts.get("test")
-                if test is None:
+                scripts = data.get("scripts")
+                if scripts is None:
                     pass
-                elif not isinstance(test, str):
+                elif not isinstance(scripts, dict):
                     plans.append(
                         {
                             "kind": "npm-test",
                             "manifest": str(pkg_json),
-                            "error": "invalid scripts.test shape",
+                            "error": "invalid scripts shape",
                             "class": "review",
                             "package": rel,
                             "cwd": str(pkg),
                         }
                     )
-                elif test:
-                    plans.append(
-                        {
-                            "kind": "npm-test",
-                            "manifest": str(pkg_json),
-                            "body": redact_secrets(test)[:200],
-                            "class": classify_script(test),
-                            "package": rel,
-                            "cwd": str(pkg),
-                        }
-                    )
+                else:
+                    test = scripts.get("test")
+                    if test is None:
+                        pass
+                    elif not isinstance(test, str):
+                        plans.append(
+                            {
+                                "kind": "npm-test",
+                                "manifest": str(pkg_json),
+                                "error": "invalid scripts.test shape",
+                                "class": "review",
+                                "package": rel,
+                                "cwd": str(pkg),
+                            }
+                        )
+                    elif test:
+                        plans.append(
+                            {
+                                "kind": "npm-test",
+                                "manifest": str(pkg_json),
+                                "body": redact_secrets(test)[:200],
+                                "class": classify_script(test),
+                                "package": rel,
+                                "cwd": str(pkg),
+                            }
+                        )
 
     if readable_in_tree(pkg / "go.mod", root):
         plans.append(

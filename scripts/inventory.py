@@ -12,6 +12,8 @@ from paths import inside, require_inside
 from walk import (
     LANG_FROM_EXT,
     SOURCE_EXT,
+    MAX_SECRET_CANDIDATES,
+    bounded_read_text,
     coverage_json,
     find_xcode_bundles,
     is_entrypoint,
@@ -76,9 +78,12 @@ def manifest_entrypoints(root: Path) -> list[str]:
     pkg = root / "package.json"
     if not readable_in_tree(pkg, root):
         return []
+    read = bounded_read_text(pkg, root)
+    if not read.text:
+        return []
     try:
-        data = json.loads(pkg.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(read.text)
+    except json.JSONDecodeError:
         return []
     if not isinstance(data, dict):
         return []
@@ -144,6 +149,8 @@ def main() -> int:
     cover = walk_tree(root)
     files = cover.files
     secrets: list[dict] = []
+    secret_candidates_total = 0
+    secret_candidates_truncated = False
     docs: list[str] = []
     sources: list[tuple[int, str, str]] = []
     todo_count = 0
@@ -161,6 +168,10 @@ def main() -> int:
         name = p.name
         secret = resolved_is_secret(p, root)
         if secret:
+            secret_candidates_total += 1
+            if len(secrets) >= MAX_SECRET_CANDIDATES:
+                secret_candidates_truncated = True
+                continue
             secrets.append({"path": rel, "git": git_status(ws, p, has_git=has_git)})
             continue
         if name.startswith("README") or name.endswith(".md"):
@@ -251,6 +262,8 @@ def main() -> int:
         "docs_truncated": docs_count > 80,
         "workspace_markers": markers,
         "secret_candidates": secrets,
+        "secret_candidates_total": secret_candidates_total,
+        "secret_candidates_truncated": secret_candidates_truncated,
         "entrypoints": entrypoints[:40],
         "generated_excluded_from_top": True,
         "complete_todo_list": False,
@@ -261,6 +274,7 @@ def main() -> int:
             cover.walk_complete
             and line_count_truncated == 0
             and todo_skipped_large == 0
+            and not secret_candidates_truncated
         ),
     }
     print(json.dumps(out, indent=2))

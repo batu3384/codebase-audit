@@ -234,6 +234,48 @@ ENTRY_RELS = {
 MAX_READ_BYTES = 2_000_000
 MAX_LINECOUNT_BYTES = 8_000_000
 MAX_LINECOUNT_LINES = 500_000
+MAX_SECRET_CANDIDATES = 200
+
+
+class BoundedRead(NamedTuple):
+    text: str | None
+    skip_reason: str | None  # None = ok; else large|unreadable|binary
+
+
+def bounded_read_text(path: Path, root: Path) -> BoundedRead:
+    """Bounded UTF-8 read for untrusted tree files. Never follows outside secrets."""
+    if not readable_in_tree(path, root):
+        return BoundedRead(None, "unreadable")
+    try:
+        st = path.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            path = path.resolve()
+            st = path.stat()
+        if st.st_size > MAX_READ_BYTES:
+            return BoundedRead(None, "large")
+        raw = path.read_bytes()[:8]
+        if raw.startswith(b"bplist"):
+            return BoundedRead(None, "binary")
+        return BoundedRead(path.read_text(encoding="utf-8", errors="replace"), None)
+    except OSError:
+        return BoundedRead(None, "unreadable")
+
+
+def is_under_pruned_dir(path: Path, root: Path) -> bool:
+    try:
+        resolved = path.resolve()
+        root_res = root.resolve()
+        if not inside(resolved, root_res):
+            return False
+        rel = resolved.relative_to(root_res)
+    except (OSError, ValueError):
+        return False
+    cur = root_res
+    for part in rel.parts[:-1]:
+        cur = cur / part
+        if should_prune_dir(cur):
+            return True
+    return False
 
 
 def redact_secrets(s: str) -> str:
@@ -270,6 +312,7 @@ class WalkCover(NamedTuple):
     skipped_unreadable: int
     skipped_walk_errors: int
     skipped_symlink_files: int
+    skipped_symlink_unscanned: int
 
     @property
     def walk_complete(self) -> bool:
@@ -278,6 +321,7 @@ class WalkCover(NamedTuple):
             and self.skipped_unreadable == 0
             and self.skipped_symlink_dirs == 0
             and self.skipped_walk_errors == 0
+            and self.skipped_symlink_unscanned == 0
         )
 
 
@@ -288,6 +332,7 @@ def coverage_json(cover: WalkCover) -> dict:
         "skipped_unreadable": cover.skipped_unreadable,
         "skipped_walk_errors": cover.skipped_walk_errors,
         "skipped_symlink_files": cover.skipped_symlink_files,
+        "skipped_symlink_unscanned": cover.skipped_symlink_unscanned,
         "walk_complete": cover.walk_complete,
     }
 
@@ -445,6 +490,7 @@ def walk_tree(root: Path) -> WalkCover:
     skipped_unreadable = 0
     skipped_walk_errors = 0
     skipped_symlink_files = 0
+    skipped_symlink_unscanned = 0
 
     def onerror(_err: OSError) -> None:
         nonlocal skipped_walk_errors
@@ -499,6 +545,8 @@ def walk_tree(root: Path) -> WalkCover:
                 if stat.S_ISREG(rst.st_mode):
                     if resolved_is_secret(p, root):
                         out.append(p)
+                    elif is_under_pruned_dir(resolved, root):
+                        skipped_symlink_unscanned += 1
                     else:
                         skipped_symlink_files += 1
                     continue
@@ -513,6 +561,7 @@ def walk_tree(root: Path) -> WalkCover:
         skipped_unreadable,
         skipped_walk_errors,
         skipped_symlink_files,
+        skipped_symlink_unscanned,
     )
 
 

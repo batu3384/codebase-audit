@@ -59,7 +59,13 @@ def main() -> int:
     resolve = [PY, str(SCRIPTS / "resolve-root.py"), str(args.workspace)]
     if args.audit_path:
         resolve.append(str(args.audit_path))
-    r = subprocess.run(resolve, capture_output=True, text=True, cwd=str(SCRIPTS))
+    try:
+        r = subprocess.run(
+            resolve, capture_output=True, text=True, cwd=str(SCRIPTS), timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("resolve-root timeout\n")
+        return 2
     if r.returncode != 0:
         sys.stderr.write(r.stderr or r.stdout or "resolve-root failed\n")
         return 2

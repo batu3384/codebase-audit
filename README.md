@@ -162,6 +162,8 @@ git pull
 
 ## Changelog
 
+**v1.3.3** — Bounded manifest reads (`bounded_read_text`); promises/inventory/runtime share 2 MB cap; `skipped_symlink_unscanned` fails `walk_complete`; stub truncation fails `complete_scan`; secret candidate cap (200); resolve-root 30s timeout; self-check env probe uses bounded helper.
+
 **v1.3.2** — Manifest shape guards (no child crash on odd JSON); runtime plan bodies redacted; in-tree file symlinks counted once; host-link frontmatter ownership + home containment; self-check timeouts; monotonic `--run` deadline; drift ignores sidecar symlinks.
 
 **v1.3.1** — Fail-closed outside symlink manifests; `WalkCover` on every child JSON; installer symlink guards; schema type checks; Windows `taskkill /T`.

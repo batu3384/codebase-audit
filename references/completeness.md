@@ -16,7 +16,7 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/stub-scan.py" "$W
 - Entrypoint + `NotImplementedError` / `todo!` / `fatalError("TODO` / `unimplemented!` → Functional correctness, Major.
 - Same tag off the main path → one finding per tag with count, not one finding per line.
 - Do not dump every `todo_samples` row as its own `CA-NNN`. Use `todo_by_file` for clusters.
-- `complete_scan: false` / `walk_complete: false` / `skipped_large` > 0 → do not claim stub completeness (files over 2 MB or skipped walk entries were not read).
+- `complete_scan: false` / `walk_complete: false` / `truncated: true` / `skipped_large` > 0 → do not claim stub completeness (detail cap, files over 2 MB, or skipped walk entries were not fully read).
 
 ## Broken (static)
 

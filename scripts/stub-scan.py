@@ -86,7 +86,11 @@ def main() -> int:
         "hits": hits,
         "truncated": sum(by_tag.values()) > MAX_HITS,
         "skipped_large": skipped_large,
-        "complete_scan": skipped_large == 0 and cover.walk_complete,
+        "complete_scan": (
+            skipped_large == 0
+            and cover.walk_complete
+            and sum(by_tag.values()) <= MAX_HITS
+        ),
         **coverage_json(cover),
         "note": "regex stubs only; empty `pass` bodies not flagged (too noisy)",
     }

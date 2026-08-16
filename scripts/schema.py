@@ -8,6 +8,7 @@ WALK_KEYS = frozenset(
         "skipped_unreadable",
         "skipped_walk_errors",
         "skipped_symlink_files",
+        "skipped_symlink_unscanned",
         "walk_complete",
     }
 )
@@ -19,6 +20,8 @@ REQUIRED: dict[str, frozenset[str]] = {
             "file_count",
             "profile",
             "secret_candidates",
+            "secret_candidates_total",
+            "secret_candidates_truncated",
             "complete_scan",
             "line_count_truncated",
             "todo_skipped_large",
@@ -37,13 +40,24 @@ REQUIRED: dict[str, frozenset[str]] = {
         }
     )
     | WALK_KEYS,
-    "promises": frozenset({"root", "missing_paths", "haystack_truncated", "missing_complete"})
+    "promises": frozenset(
+        {
+            "root",
+            "missing_paths",
+            "haystack_truncated",
+            "missing_complete",
+            "skipped_large",
+            "skipped_unreadable",
+            "package_manifest_skipped",
+        }
+    )
     | WALK_KEYS,
     "import-sample": frozenset(
         {"root", "unresolved", "orphans", "unresolved_complete", "orphans_complete", "truncated"}
     )
     | WALK_KEYS,
-    "stub-scan": frozenset({"root", "hit_count", "complete_scan", "skipped_large"}) | WALK_KEYS,
+    "stub-scan": frozenset({"root", "hit_count", "complete_scan", "skipped_large", "truncated"})
+    | WALK_KEYS,
     "runtime-check": frozenset({"root", "mode", "plans", "sandbox", "packages_complete"})
     | WALK_KEYS,
 }
@@ -68,6 +82,8 @@ BOOL_KEYS = frozenset(
         "plist_missing_skipped_multi",
         "generated_excluded_from_top",
         "sample_truncated",
+        "package_manifest_skipped",
+        "secret_candidates_truncated",
     }
 )
 
@@ -95,7 +111,9 @@ INT_NONNEG = frozenset(
         "skipped_unreadable",
         "skipped_walk_errors",
         "skipped_symlink_files",
+        "skipped_symlink_unscanned",
         "skipped_large",
+        "skipped_unreadable",
         "line_count_truncated",
         "todo_skipped_large",
         "hit_count",
@@ -110,6 +128,7 @@ INT_NONNEG = frozenset(
         "n",
         "files",
         "skipped_outside_manifests",
+        "secret_candidates_total",
     }
 )
 

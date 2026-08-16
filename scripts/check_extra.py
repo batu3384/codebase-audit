@@ -13,10 +13,15 @@ SCRIPTS = Path(__file__).resolve().parent
 PY = sys.executable
 
 
-def run(args: list[str], timeout: int = 45) -> subprocess.CompletedProcess[str]:
+def run(args: list[str], timeout: int = 45, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            args, capture_output=True, text=True, cwd=str(SCRIPTS), timeout=timeout
+            args,
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPTS),
+            timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         return subprocess.CompletedProcess(
@@ -41,11 +46,8 @@ def extra_errors() -> list[str]:
         )
         env = os.environ.copy()
         env["CODEX_SECRET_PROBE"] = "should-not-appear-in-json"
-        r = subprocess.run(
+        r = run(
             [PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj), "--run"],
-            capture_output=True,
-            text=True,
-            cwd=str(SCRIPTS),
             env=env,
         )
         if r.returncode != 0:
@@ -96,7 +98,7 @@ def extra_errors() -> list[str]:
 
     from paths import home_ok, is_broad_workspace, is_fs_root
     from schema import validate_child
-    from walk import MAX_LINECOUNT_BYTES, MAX_READ_BYTES, redact_secrets
+    from walk import MAX_SECRET_CANDIDATES, MAX_READ_BYTES, MAX_LINECOUNT_BYTES, redact_secrets
 
     if not is_fs_root(Path("/")):
         errors.append("is_fs_root(/) should be true")
@@ -121,6 +123,7 @@ def extra_errors() -> list[str]:
             "skipped_unreadable": 0,
             "skipped_walk_errors": 0,
             "skipped_symlink_files": 0,
+            "skipped_symlink_unscanned": 0,
             "walk_complete": True,
         },
         bundle_root="/tmp/x",
@@ -133,6 +136,8 @@ def extra_errors() -> list[str]:
             "file_count": 0,
             "profile": {},
             "secret_candidates": [],
+            "secret_candidates_total": 0,
+            "secret_candidates_truncated": False,
             "complete_scan": "false",
             "line_count_truncated": 0,
             "todo_skipped_large": 0,
@@ -141,6 +146,7 @@ def extra_errors() -> list[str]:
             "skipped_unreadable": 0,
             "skipped_walk_errors": 0,
             "skipped_symlink_files": 0,
+            "skipped_symlink_unscanned": 0,
             "walk_complete": True,
         },
         bundle_root="/tmp/x",
@@ -559,6 +565,60 @@ def extra_errors() -> list[str]:
             data = json.loads(r.stdout)
             if data.get("previous") is not None:
                 errors.append(f"symlink previous sidecar should be ignored, got {data.get('previous')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "bigpkg"
+        proj.mkdir()
+        bogus = "scripts/missing.js"
+        pad = "x" * (MAX_READ_BYTES + 1)
+        (proj / "package.json").write_text(
+            '{"scripts":{"test":"node ' + bogus + '"},"pad":"' + pad + '"}'
+        )
+        r = run([PY, str(SCRIPTS / "promises.py"), str(proj), str(proj)])
+        pdata = json.loads(r.stdout)
+        if pdata.get("missing_complete") is not False:
+            errors.append(f"large package.json should set missing_complete false, got {pdata}")
+        if pdata.get("package_manifest_skipped") is not True:
+            errors.append(f"large package.json should set package_manifest_skipped, got {pdata}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "prunesym"
+        nm = proj / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "real.py").write_text("# TODO pruned\n")
+        (proj / "alias.py").symlink_to(nm / "real.py")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("skipped_symlink_unscanned", 0) < 1:
+            errors.append(f"pruned symlink target should set skipped_symlink_unscanned, got {data}")
+        if data.get("complete_scan") is not False:
+            errors.append(f"pruned symlink should set complete_scan false, got {data}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "manystub"
+        proj.mkdir()
+        for i in range(81):
+            (proj / f"s{i}.py").write_text("raise NotImplementedError\n")
+        r = run([PY, str(SCRIPTS / "stub-scan.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("truncated") is not True:
+            errors.append(f"81 stubs should set truncated, got {data}")
+        if data.get("complete_scan") is not False:
+            errors.append(f"stub truncation should set complete_scan false, got {data}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "manysecret"
+        proj.mkdir()
+        for i in range(MAX_SECRET_CANDIDATES + 5):
+            (proj / f".env.{i}").write_text("x=1\n")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("secret_candidates_truncated") is not True:
+            errors.append(f"secret cap should set secret_candidates_truncated, got {data}")
+        if len(data.get("secret_candidates") or []) > MAX_SECRET_CANDIDATES:
+            errors.append("secret_candidates list should be capped")
+        if data.get("complete_scan") is not False:
+            errors.append(f"secret cap should set complete_scan false, got {data}")
 
     src = (SCRIPTS / "check_extra.py").read_text(encoding="utf-8")
     if "timeout=" not in src.split("def run", 1)[-1][:400]:
