@@ -10,7 +10,7 @@ from pathlib import Path
 
 from paths import require_inside
 from walk import (
-    MAX_READ_BYTES,
+    bounded_read_text,
     coverage_json,
     is_entrypoint,
     is_generated,
@@ -100,17 +100,13 @@ def resolve_py_rel(src: Path, dots: str, rest: str, names: str, root: Path) -> l
     return filtered
 
 
-def file_edges(path: Path, root: Path) -> list[tuple[str, str, int, str]]:
+def file_edges(path: Path, root: Path) -> tuple[list[tuple[str, str, int, str]], str | None]:
     rel = str(path.relative_to(root))
     ext = path.suffix.lower()
-    try:
-        if not readable_in_tree(path, root):
-            return []
-        if path.stat().st_size > MAX_READ_BYTES:
-            return []
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
+    read = bounded_read_text(path, root)
+    if read.skip_reason:
+        return [], read.skip_reason
+    text = read.text or ""
     out: list[tuple[str, str, int, str]] = []
     lines = text.splitlines()
     if ext in JS_EXT:
@@ -141,7 +137,7 @@ def file_edges(path: Path, root: Path) -> list[tuple[str, str, int, str]]:
                     dest = dest.with_suffix(".go")
                 dest_rel, kind = dest_kind(dest, spec, root, dir_ok=True)
                 out.append((rel, dest_rel, i, kind))
-    return out
+    return out, None
 
 
 def cycles_in(edges: list[tuple[str, str, int, str]]) -> list[list[str]]:
@@ -208,6 +204,8 @@ def main() -> int:
     srcs: list[str] = []
     parsed = 0
     truncated = not cover.walk_complete
+    skipped_large = 0
+    read_skipped_unreadable = 0
     for p in cover.files:
         if not readable_in_tree(p, root):
             continue
@@ -218,8 +216,16 @@ def main() -> int:
             truncated = True
             break
         rel = str(p.relative_to(root))
+        edges_here, skip = file_edges(p, root)
+        if skip:
+            truncated = True
+            if skip == "large":
+                skipped_large += 1
+            else:
+                read_skipped_unreadable += 1
+            continue
         srcs.append(rel)
-        edges.extend(file_edges(p, root))
+        edges.extend(edges_here)
 
     missing = [
         {"from": a, "to": b, "line": ln}
@@ -286,6 +292,8 @@ def main() -> int:
         "note": "relative imports only among js/py/go; do not claim repo-wide acyclic",
         "truncated": truncated,
         "sample_truncated": len(edges) > SAMPLE_EDGES,
+        "skipped_large": skipped_large,
+        "read_skipped_unreadable": read_skipped_unreadable,
         **coverage_json(cover),
     }
     print(json.dumps(out, indent=2))

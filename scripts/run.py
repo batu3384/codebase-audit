@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from schema import validate_child
@@ -23,7 +24,9 @@ ORDER = (
 )
 
 
-def run_one(name: str, args: list[str], timeout: int) -> dict:
+def run_one(name: str, args: list[str], timeout: float) -> dict:
+    if timeout <= 0:
+        return {"error": "timeout budget", "exit": 124}
     try:
         r = subprocess.run(
             [PY, str(SCRIPTS / name), *args],
@@ -56,12 +59,18 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
 
+    deadline = time.monotonic() + args.timeout
     resolve = [PY, str(SCRIPTS / "resolve-root.py"), str(args.workspace)]
     if args.audit_path:
         resolve.append(str(args.audit_path))
+    resolve_budget = min(30.0, max(0.1, deadline - time.monotonic()))
     try:
         r = subprocess.run(
-            resolve, capture_output=True, text=True, cwd=str(SCRIPTS), timeout=30
+            resolve,
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPTS),
+            timeout=resolve_budget,
         )
     except subprocess.TimeoutExpired:
         sys.stderr.write("resolve-root timeout\n")
@@ -77,9 +86,12 @@ def main() -> int:
         "mode": "run" if args.run else "static",
     }
     for name in ORDER:
-        extra = ["--run"] if name == "runtime-check.py" and args.run else []
+        remaining = deadline - time.monotonic()
+        extra: list[str] = []
+        if name == "runtime-check.py" and args.run:
+            extra = ["--run", "--timeout", str(max(1, int(remaining)))]
         stem = name.replace(".py", "")
-        blob = run_one(name, pair + extra, args.timeout)
+        blob = run_one(name, pair + extra, remaining)
         out[stem] = blob
         err = validate_child(stem, blob, bundle_root=root)
         if err:

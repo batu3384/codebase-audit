@@ -98,7 +98,7 @@ def extra_errors() -> list[str]:
 
     from paths import home_ok, is_broad_workspace, is_fs_root
     from schema import validate_child
-    from walk import MAX_SECRET_CANDIDATES, MAX_READ_BYTES, MAX_LINECOUNT_BYTES, redact_secrets
+    from walk import MAX_ENTRYPOINTS, MAX_SECRET_CANDIDATES, MAX_READ_BYTES, MAX_LINECOUNT_BYTES, redact_secrets
 
     if not is_fs_root(Path("/")):
         errors.append("is_fs_root(/) should be true")
@@ -138,6 +138,7 @@ def extra_errors() -> list[str]:
             "secret_candidates": [],
             "secret_candidates_total": 0,
             "secret_candidates_truncated": False,
+            "entrypoints_truncated": False,
             "complete_scan": "false",
             "line_count_truncated": 0,
             "todo_skipped_large": 0,
@@ -619,6 +620,97 @@ def extra_errors() -> list[str]:
             errors.append("secret_candidates list should be capped")
         if data.get("complete_scan") is not False:
             errors.append(f"secret cap should set complete_scan false, got {data}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "implarge"
+        proj.mkdir()
+        (proj / "ok.py").write_text("x=1\n")
+        (proj / "huge.py").write_text("# pad\nfrom .ghost import missing\n" + ("x" * (MAX_READ_BYTES + 1)))
+        r = run([PY, str(SCRIPTS / "import-sample.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("truncated") is not True:
+            errors.append(f"oversized import file should set truncated, got {data}")
+        if data.get("unresolved_complete") is not False:
+            errors.append(f"oversized import file should set unresolved_complete false, got {data}")
+        orphans = data.get("orphans") or []
+        if any(o.endswith("huge.py") or o == "huge.py" for o in orphans):
+            errors.append(f"unread huge.py must not be an orphan, got {orphans}")
+        if data.get("skipped_large", 0) < 1:
+            errors.append(f"oversized import file should set skipped_large, got {data}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "docscap"
+        proj.mkdir()
+        (proj / "README.md").write_text("`src/never-scanned.ts`\n")
+        for i in range(201):
+            (proj / f"A{i:03d}.md").write_text("# pad\n")
+        r = run([PY, str(SCRIPTS / "docs-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        promised = [x.get("path") for x in data.get("promised_missing") or []]
+        if "src/never-scanned.ts" not in promised:
+            errors.append(f"README promised path should survive md cap, got {promised}")
+        if data.get("truncated") is not True:
+            errors.append("201 extra md files should set truncated")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "eps"
+        proj.mkdir()
+        for i in range(MAX_ENTRYPOINTS + 5):
+            ddir = proj / f"p{i:02d}"
+            ddir.mkdir()
+            (ddir / "main.py").write_text("x=1\n")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("entrypoints_truncated") is not True:
+            errors.append(f"entrypoint cap should set entrypoints_truncated, got {data}")
+        if len(data.get("entrypoints") or []) > MAX_ENTRYPOINTS:
+            errors.append("entrypoints list should be capped")
+        if data.get("complete_scan") is not False:
+            errors.append(f"entrypoint cap should set complete_scan false, got {data}")
+
+    if os.name != "nt":
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "chmodstub"
+            proj.mkdir()
+            locked = proj / "locked.py"
+            locked.write_text("raise NotImplementedError\n# TODO hidden\n")
+            os.chmod(locked, 0)
+            try:
+                r = run([PY, str(SCRIPTS / "stub-scan.py"), str(proj), str(proj)])
+                data = json.loads(r.stdout)
+                if data.get("complete_scan") is not False:
+                    errors.append(f"unreadable stub file should set complete_scan false, got {data}")
+                if data.get("read_skipped_unreadable", 0) < 1:
+                    errors.append(f"unreadable stub file should set read_skipped_unreadable, got {data}")
+                r2 = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+                data2 = json.loads(r2.stdout)
+                if data2.get("complete_scan") is not False:
+                    errors.append(f"unreadable TODO file should set complete_scan false, got {data2}")
+            finally:
+                os.chmod(locked, 0o644)
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "chmodts"
+            proj.mkdir()
+            locked = proj / "app.ts"
+            locked.write_text("export const x = 1\n")
+            os.chmod(locked, 0)
+            try:
+                r = run([PY, str(SCRIPTS / "promises.py"), str(proj), str(proj)])
+                data = json.loads(r.stdout)
+                if data.get("read_skipped_unreadable", 0) < 1:
+                    errors.append(f"unreadable haystack file should set read_skipped_unreadable, got {data}")
+                if data.get("missing_complete") is not False:
+                    errors.append(f"unreadable haystack should set missing_complete false, got {data}")
+            finally:
+                os.chmod(locked, 0o644)
+
+    walk_src = (SCRIPTS / "walk.py").read_text(encoding="utf-8")
+    if "path.read_bytes()" in walk_src:
+        errors.append("bounded_read_text must not load the whole file via read_bytes()")
+    if "MAX_HAYSTACK_BYTES" not in (SCRIPTS / "promises.py").read_text(encoding="utf-8"):
+        errors.append("promises haystack must use MAX_HAYSTACK_BYTES")
+    if "deadline = time.monotonic()" not in (SCRIPTS / "run.py").read_text(encoding="utf-8"):
+        errors.append("run.py must use a shared monotonic deadline")
 
     src = (SCRIPTS / "check_extra.py").read_text(encoding="utf-8")
     if "timeout=" not in src.split("def run", 1)[-1][:400]:

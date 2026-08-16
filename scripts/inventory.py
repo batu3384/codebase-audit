@@ -12,6 +12,7 @@ from paths import inside, require_inside
 from walk import (
     LANG_FROM_EXT,
     SOURCE_EXT,
+    MAX_ENTRYPOINTS,
     MAX_SECRET_CANDIDATES,
     bounded_read_text,
     coverage_json,
@@ -198,7 +199,7 @@ def main() -> int:
             pkg = nearest_package(p, root)
             sources.append((n, rel, pkg))
         if want_todo:
-            c, samp, skipped_large = scan_todo(p, rel, n)
+            c, samp, skipped_large = scan_todo(p, rel, n, root)
             if skipped_large:
                 todo_skipped_large += 1
             todo_count += c
@@ -264,7 +265,9 @@ def main() -> int:
         "secret_candidates": secrets,
         "secret_candidates_total": secret_candidates_total,
         "secret_candidates_truncated": secret_candidates_truncated,
-        "entrypoints": entrypoints[:40],
+        "entrypoints": entrypoints[:MAX_ENTRYPOINTS],
+        "entrypoints_total": len(entrypoints),
+        "entrypoints_truncated": len(entrypoints) > MAX_ENTRYPOINTS,
         "generated_excluded_from_top": True,
         "complete_todo_list": False,
         **coverage_json(cover),
@@ -275,6 +278,7 @@ def main() -> int:
             and line_count_truncated == 0
             and todo_skipped_large == 0
             and not secret_candidates_truncated
+            and len(entrypoints) <= MAX_ENTRYPOINTS
         ),
     }
     print(json.dumps(out, indent=2))

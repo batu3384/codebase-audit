@@ -8,7 +8,14 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import bounded_read_text, coverage_json, is_generated, readable_in_tree, walk_tree
+from walk import (
+    MAX_HAYSTACK_BYTES,
+    bounded_read_text,
+    coverage_json,
+    is_generated,
+    readable_in_tree,
+    walk_tree,
+)
 
 PATH_TOKEN = re.compile(
     r"(?:\./)?(?:scripts?|tools|bin|src|app|ci|fastlane)/[\w./+-]+\.[A-Za-z0-9]+"
@@ -48,12 +55,13 @@ def extract_paths(text: str) -> list[str]:
 def collect_haystack(
     root: Path, files: list[Path]
 ) -> tuple[str, int, bool, int, int]:
-    """One pass over source. Cap 400 files."""
+    """One pass over source. Cap 400 files and MAX_HAYSTACK_BYTES."""
     chunks: list[str] = []
     n = 0
     truncated = False
     skipped_large = 0
     skipped_unreadable = 0
+    total = 0
     for p in files:
         if not readable_in_tree(p, root) or is_generated(p.name):
             continue
@@ -71,7 +79,12 @@ def collect_haystack(
             skipped_unreadable += 1
             continue
         if read.text:
+            extra = len(read.text)
+            if total + extra > MAX_HAYSTACK_BYTES:
+                truncated = True
+                break
             chunks.append(read.text)
+            total += extra
     return "\n".join(chunks), min(n, 400), truncated, skipped_large, skipped_unreadable
 
 
@@ -200,7 +213,7 @@ def main() -> int:
         "haystack_files": haystack_files,
         "haystack_truncated": haystack_truncated,
         "skipped_large": skipped_large,
-        "skipped_unreadable": skipped_unreadable,
+        "read_skipped_unreadable": skipped_unreadable,
         **coverage_json(cover),
         "note": "CI/package/plist paths and privacy keys vs symbols; no product-feature NLP",
     }

@@ -23,7 +23,7 @@ JSON: `n`, `files`, `sample`, `unresolved`, `unresolved_complete`, `cycles`, `or
 - `layer_hints` UI folder importing data/db folder → Architecture, Major.
 - `hubs` (in_edges ≥ 3) → one Maintainability finding, no double-count with god file.
 - Bare `import UIKit` / `import os` skipped.
-- `truncated: true` → parse file cap; do not pretend completeness.
+- `truncated: true` / `skipped_large` > 0 / `read_skipped_unreadable` > 0 → parse skip or file cap; do not pretend completeness. Unread files are not orphans.
 
 ## Layers
 

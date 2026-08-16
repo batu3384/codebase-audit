@@ -235,6 +235,8 @@ MAX_READ_BYTES = 2_000_000
 MAX_LINECOUNT_BYTES = 8_000_000
 MAX_LINECOUNT_LINES = 500_000
 MAX_SECRET_CANDIDATES = 200
+MAX_ENTRYPOINTS = 40
+MAX_HAYSTACK_BYTES = 8_000_000
 
 
 class BoundedRead(NamedTuple):
@@ -253,10 +255,14 @@ def bounded_read_text(path: Path, root: Path) -> BoundedRead:
             st = path.stat()
         if st.st_size > MAX_READ_BYTES:
             return BoundedRead(None, "large")
-        raw = path.read_bytes()[:8]
-        if raw.startswith(b"bplist"):
-            return BoundedRead(None, "binary")
-        return BoundedRead(path.read_text(encoding="utf-8", errors="replace"), None)
+        with path.open("rb") as f:
+            magic = f.read(8)
+            if magic.startswith(b"bplist"):
+                return BoundedRead(None, "binary")
+            raw = magic + f.read(MAX_READ_BYTES + 1 - len(magic))
+        if len(raw) > MAX_READ_BYTES:
+            return BoundedRead(None, "large")
+        return BoundedRead(raw.decode("utf-8", errors="replace"), None)
     except OSError:
         return BoundedRead(None, "unreadable")
 
@@ -595,28 +601,21 @@ def line_count(path: Path) -> int:
     return n
 
 
-def scan_todo(path: Path, rel: str, nlines: int) -> tuple[int, list[str], bool]:
-    try:
-        st = path.lstat()
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-            return 0, [], False
-        if st.st_size > MAX_READ_BYTES:
-            return 0, [], True
-    except OSError:
-        return 0, [], False
+def scan_todo(path: Path, rel: str, nlines: int, root: Path) -> tuple[int, list[str], bool]:
+    read = bounded_read_text(path, root)
+    if read.skip_reason:
+        return 0, [], True
     count = 0
     samples: list[str] = []
-    try:
-        with path.open(encoding="utf-8", errors="replace") as f:
-            for i, line in enumerate(f, 1):
-                if not TODO_RE.search(line):
-                    continue
-                count += 1
-                take = nlines <= 800 or i <= 80 or i > nlines - 40
-                if take and len(samples) < 20:
-                    samples.append(f"{rel}:{i}:{redact(line.strip())}")
-    except OSError:
-        return 0, [], False
+    lines = (read.text or "").splitlines()
+    total = nlines if nlines else len(lines)
+    for i, line in enumerate(lines, 1):
+        if not TODO_RE.search(line):
+            continue
+        count += 1
+        take = total <= 800 or i <= 80 or i > total - 40
+        if take and len(samples) < 20:
+            samples.append(f"{rel}:{i}:{redact(line.strip())}")
     return count, samples, False
 
 

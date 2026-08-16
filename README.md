@@ -162,6 +162,8 @@ git pull
 
 ## Changelog
 
+**v1.3.4** — Import/docs/stub/TODO skip paths fail complete flags; README promised-paths ignore the 200-md cap; `entrypoints_truncated`; `read_skipped_unreadable` not clobbered by walk coverage; bounded reader caps body bytes; haystack 8 MB total; `run.py` shared monotonic budget.
+
 **v1.3.3** — Bounded manifest reads (`bounded_read_text`); promises/inventory/runtime share 2 MB cap; `skipped_symlink_unscanned` fails `walk_complete`; stub truncation fails `complete_scan`; secret candidate cap (200); resolve-root 30s timeout; self-check env probe uses bounded helper.
 
 **v1.3.2** — Manifest shape guards (no child crash on odd JSON); runtime plan bodies redacted; in-tree file symlinks counted once; host-link frontmatter ownership + home containment; self-check timeouts; monotonic `--run` deadline; drift ignores sidecar symlinks.

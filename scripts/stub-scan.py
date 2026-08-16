@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import MAX_READ_BYTES, SOURCE_EXT, coverage_json, is_generated, readable_in_tree, redact, walk_tree
+from walk import SOURCE_EXT, bounded_read_text, coverage_json, is_generated, readable_in_tree, redact, walk_tree
 
 # Each: (regex, tag). Tag is the finding hint, not severity (agent decides entrypoint).
 PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -40,6 +40,7 @@ def main() -> int:
     by_tag: dict[str, int] = {}
     scanned = 0
     skipped_large = 0
+    read_skipped_unreadable = 0
 
     for p in cover.files:
         if not readable_in_tree(p, root) or is_generated(p.name):
@@ -48,14 +49,15 @@ def main() -> int:
             continue
         if p.suffix.lower() not in SOURCE_EXT:
             continue
-        scanned += 1
-        try:
-            if p.stat().st_size > MAX_READ_BYTES:
-                skipped_large += 1
-                continue
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        read = bounded_read_text(p, root)
+        if read.skip_reason == "large":
+            skipped_large += 1
             continue
+        if read.skip_reason:
+            read_skipped_unreadable += 1
+            continue
+        scanned += 1
+        text = read.text or ""
         rel = str(p.relative_to(root))
         for i, line in enumerate(text.splitlines(), 1):
             s = line.strip()
@@ -86,8 +88,10 @@ def main() -> int:
         "hits": hits,
         "truncated": sum(by_tag.values()) > MAX_HITS,
         "skipped_large": skipped_large,
+        "read_skipped_unreadable": read_skipped_unreadable,
         "complete_scan": (
             skipped_large == 0
+            and read_skipped_unreadable == 0
             and cover.walk_complete
             and sum(by_tag.values()) <= MAX_HITS
         ),

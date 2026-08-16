@@ -25,6 +25,7 @@ REQUIRED: dict[str, frozenset[str]] = {
             "complete_scan",
             "line_count_truncated",
             "todo_skipped_large",
+            "entrypoints_truncated",
         }
     )
     | WALK_KEYS,
@@ -47,16 +48,18 @@ REQUIRED: dict[str, frozenset[str]] = {
             "haystack_truncated",
             "missing_complete",
             "skipped_large",
-            "skipped_unreadable",
+            "read_skipped_unreadable",
             "package_manifest_skipped",
         }
     )
     | WALK_KEYS,
     "import-sample": frozenset(
-        {"root", "unresolved", "orphans", "unresolved_complete", "orphans_complete", "truncated"}
+        {"root", "unresolved", "orphans", "unresolved_complete", "orphans_complete", "truncated", "skipped_large", "read_skipped_unreadable"}
     )
     | WALK_KEYS,
-    "stub-scan": frozenset({"root", "hit_count", "complete_scan", "skipped_large", "truncated"})
+    "stub-scan": frozenset(
+        {"root", "hit_count", "complete_scan", "skipped_large", "truncated", "read_skipped_unreadable"}
+    )
     | WALK_KEYS,
     "runtime-check": frozenset({"root", "mode", "plans", "sandbox", "packages_complete"})
     | WALK_KEYS,
@@ -84,6 +87,7 @@ BOOL_KEYS = frozenset(
         "sample_truncated",
         "package_manifest_skipped",
         "secret_candidates_truncated",
+        "entrypoints_truncated",
     }
 )
 
@@ -129,6 +133,8 @@ INT_NONNEG = frozenset(
         "files",
         "skipped_outside_manifests",
         "secret_candidates_total",
+        "entrypoints_total",
+        "read_skipped_unreadable",
     }
 )
 

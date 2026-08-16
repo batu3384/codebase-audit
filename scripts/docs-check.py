@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import MAX_READ_BYTES, coverage_json, is_generated, readable_in_tree, walk_tree
+from walk import bounded_read_text, coverage_json, is_generated, readable_in_tree, walk_tree
 
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 BACKTICK_PATH = re.compile(
@@ -16,6 +16,8 @@ BACKTICK_PATH = re.compile(
 )
 SKIP_LINK = re.compile(r"^(https?://|mailto:|tel:|#|\{)")
 PLACEHOLDER_PATH = re.compile(r"YYYY|MM-DD|<[^>]+>|\{[^}]+\}")
+README_CAP = 40
+MD_CAP = 200
 
 
 def clean_href(raw: str) -> str:
@@ -41,26 +43,30 @@ def main() -> int:
     skipped_large = 0
     unreadable = 0
     md_cap = False
+    readme_cap = False
     promised_cap = False
 
+    readmes: list[Path] = []
+    others: list[Path] = []
     for p in cover.files:
         if not readable_in_tree(p, root) or is_generated(p.name):
             continue
-        if not (p.name.startswith("README") or p.suffix.lower() == ".md"):
-            continue
-        md_seen += 1
-        if md_seen > 200:
-            md_cap = True
-            break
-        try:
-            if p.stat().st_size > MAX_READ_BYTES:
-                skipped_large += 1
-                continue
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        if p.name.startswith("README"):
+            readmes.append(p)
+        elif p.suffix.lower() == ".md":
+            others.append(p)
+
+    def scan_one(p: Path, *, want_promised: bool) -> None:
+        nonlocal md_scanned, skipped_large, unreadable, link_count, promised_cap
+        read = bounded_read_text(p, root)
+        if read.skip_reason == "large":
+            skipped_large += 1
+            return
+        if read.skip_reason:
             unreadable += 1
-            continue
+            return
         md_scanned += 1
+        text = read.text or ""
         rel = str(p.relative_to(root))
         for m in MD_LINK.finditer(text):
             raw = m.group(1).strip()
@@ -80,24 +86,43 @@ def main() -> int:
             if not target.exists():
                 broken.append({"from": rel, "href": href})
                 if len(broken) >= 40:
-                    break
+                    return
+        if not want_promised or not p.name.upper().startswith("README"):
+            return
+        for m in BACKTICK_PATH.finditer(text):
+            spec = m.group(1)
+            if "://" in spec or spec.startswith("www."):
+                continue
+            if PLACEHOLDER_PATH.search(spec):
+                continue
+            if not (root / spec).exists():
+                promised_missing.append({"from": rel, "path": spec})
+                if len(promised_missing) >= 20:
+                    promised_cap = True
+                    return
+
+    for i, p in enumerate(readmes):
+        md_seen += 1
+        if i >= README_CAP:
+            readme_cap = True
+            continue
+        scan_one(p, want_promised=True)
         if len(broken) >= 40:
             break
-        if p.name.upper().startswith("README"):
-            for m in BACKTICK_PATH.finditer(text):
-                spec = m.group(1)
-                if "://" in spec or spec.startswith("www."):
-                    continue
-                if PLACEHOLDER_PATH.search(spec):
-                    continue
-                if not (root / spec).exists():
-                    promised_missing.append({"from": rel, "path": spec})
-                    if len(promised_missing) >= 20:
-                        promised_cap = True
-                        break
+
+    if len(broken) < 40:
+        for i, p in enumerate(others):
+            md_seen += 1
+            if i >= MD_CAP:
+                md_cap = True
+                break
+            scan_one(p, want_promised=False)
+            if len(broken) >= 40:
+                break
 
     promised_complete = (
         (not promised_cap)
+        and (not readme_cap)
         and skipped_large == 0
         and unreadable == 0
         and cover.walk_complete
@@ -113,7 +138,14 @@ def main() -> int:
         "promised_missing_complete": promised_complete,
         "skipped_large": skipped_large,
         "unreadable": unreadable,
-        "truncated": md_cap or len(broken) >= 40 or promised_cap or skipped_large > 0 or not cover.walk_complete,
+        "truncated": (
+            md_cap
+            or readme_cap
+            or len(broken) >= 40
+            or promised_cap
+            or skipped_large > 0
+            or not cover.walk_complete
+        ),
         **coverage_json(cover),
         "note": "in-repo relative links + README backtick paths; no NLP feature list",
     }
