@@ -1,11 +1,9 @@
 #Requires -Version 5.1
-# Install codebase-audit into %USERPROFILE%\.agents\skills and junction %USERPROFILE%\.cursor\skills (Windows).
+# Install codebase-audit into %USERPROFILE%\.agents\skills, then link Cursor / Claude / Antigravity.
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = $PSScriptRoot
 $Agents = Join-Path $env:USERPROFILE ".agents\skills\codebase-audit"
-$CursorSkills = Join-Path $env:USERPROFILE ".cursor\skills"
-$CursorLink = Join-Path $CursorSkills "codebase-audit"
 
 function Get-PythonLauncher {
     if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -18,7 +16,6 @@ function Get-PythonLauncher {
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $Agents) | Out-Null
-New-Item -ItemType Directory -Force -Path $CursorSkills | Out-Null
 
 if (Test-Path $Agents) {
     Remove-Item -Recurse -Force $Agents
@@ -28,14 +25,11 @@ Get-ChildItem -Path $RepoRoot -Force | Where-Object { $_.Name -ne ".git" } | For
     Copy-Item -Path $_.FullName -Destination $Agents -Recurse -Force
 }
 
-if (Test-Path $CursorLink) {
-    Remove-Item -Recurse -Force $CursorLink
-}
-cmd /c "mklink /J `"$CursorLink`" `"$Agents`"" | Out-Null
-
 $py = Get-PythonLauncher
-$selfCheck = Join-Path $Agents "scripts\self-check.py"
-& $py.Name @($py.Args + @($selfCheck))
+& $py.Name @($py.Args + @((Join-Path $Agents "scripts\install_links.py"), "--agents", $Agents))
+& $py.Name @($py.Args + @((Join-Path $Agents "scripts\self-check.py")))
 
 Write-Host "Installed: $Agents"
-Write-Host "Cursor:    $CursorLink"
+Write-Host "Codex reads %USERPROFILE%\.agents\skills (no extra link)."
+Write-Host "Skipped on purpose: .gemini\skills (Gemini CLI), .codex\skills (catalog)."
+Write-Host "On Windows, ~ in docs means %USERPROFILE%."

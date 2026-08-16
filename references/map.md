@@ -2,7 +2,9 @@
 
 Load only during phase 0.
 
-## Scripts (mandatory)
+Measurement already ran via one-shot `run.py`. Use JSON keys `root` and `inventory`. Do not re-run `resolve-root.py` / `inventory.py` unless that key is missing. Fallback commands below (no `rtk` → drop `rtk proxy `).
+
+## Scripts (mandatory keys)
 
 Workspace = opened project root. `AUDIT_PATH` = user path or omit.
 

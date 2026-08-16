@@ -1,6 +1,8 @@
 # Phase 1 — Structure
 
-Load only during phase 1. Full-file reads this phase: at most 15.
+Load only during phase 1. Full-file reads this phase: at most 15 (hand-reads, not a findings quota). Do not skip this phase to save tokens.
+
+Use `run.py` keys `docs-check` and `promises`. Do not re-run those scripts unless the key is missing. Fallback commands below (no `rtk` → drop `rtk proxy `).
 
 ## Docs links (mandatory script)
 

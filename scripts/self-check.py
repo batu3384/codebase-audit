@@ -464,6 +464,8 @@ def main() -> int:
                 errors.append(f"run.py missing keys {list(data)}")
             if data.get("inventory", {}).get("file_count", 0) < 1:
                 errors.append("run.py inventory empty")
+            if "\n  " in r.stdout[:240]:
+                errors.append("run.py should print compact JSON")
 
     with tempfile.TemporaryDirectory() as td:
         ws = Path(td) / "driftws"
@@ -788,6 +790,47 @@ def main() -> int:
             errors.append(f"envleak runtime-check failed: {r.stderr}")
         elif "should-not-appear-in-json" in r.stdout:
             errors.append("runtime --run leaked parent env secret")
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        agents_root = home / ".agents" / "skills"
+        skill = agents_root / "codebase-audit"
+        skill.mkdir(parents=True)
+        marker = skill / "SKILL.md"
+        marker.write_text("keep\n", encoding="utf-8")
+        (home / ".cursor").mkdir()
+        (home / ".cursor" / "skills").symlink_to(agents_root)
+        (home / ".claude").mkdir()
+        (home / ".gemini" / "config").mkdir(parents=True)
+        r = run(
+            [
+                PY,
+                str(SCRIPTS / "install_links.py"),
+                "--home",
+                str(home),
+                "--agents",
+                str(skill),
+            ]
+        )
+        if r.returncode != 0:
+            errors.append(f"install_links failed: {r.stderr or r.stdout}")
+        if marker.read_text(encoding="utf-8") != "keep\n":
+            errors.append("install_links mutated SSOT skill under a Cursor skills symlink")
+        if "already SSOT" not in (r.stdout or ""):
+            errors.append(f"install_links should skip Cursor SSOT, got {r.stdout!r}")
+        claude = home / ".claude" / "skills" / "codebase-audit"
+        if realpath := claude.resolve() if claude.exists() else None:
+            if realpath != skill.resolve():
+                errors.append(f"Claude link should point at skill, got {realpath}")
+        else:
+            errors.append("install_links should link Claude")
+        agy = home / ".gemini" / "config" / "skills" / "codebase-audit"
+        if not agy.exists():
+            errors.append("install_links should link Antigravity config/skills")
+        if (home / ".gemini" / "skills").exists():
+            errors.append("install_links must not create Gemini CLI ~/.gemini/skills")
+        if (home / ".codex" / "skills").exists():
+            errors.append("install_links must not write ~/.codex/skills")
 
     if errors:
         print("; ".join(errors))

@@ -1,6 +1,8 @@
 # Phase 3 — Security architecture
 
-Load only during phase 3. Full-file reads this phase: at most 15.
+Load only during phase 3. Full-file reads this phase: at most 15 (hand-reads, not a findings quota). Do not skip this phase to save tokens.
+
+Use `run.py` key `inventory` (`secret_candidates`). Do not re-run `inventory.py`.
 
 This is **model**, not SAST. No payloads. No exploit steps. No `security-report/`. No 48-module hunt. If the user asked for vulnerability hunting, tell them to run `security-check` separately.
 

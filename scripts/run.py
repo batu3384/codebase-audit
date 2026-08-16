@@ -62,9 +62,9 @@ def main() -> int:
         blob = out[name.replace(".py", "")]
         if isinstance(blob, dict) and (blob.get("error") or blob.get("exit") not in (None, 0)):
             out["incomplete"] = True
-            print(json.dumps(out, indent=2))
+            print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
             return 2
-    print(json.dumps(out, indent=2))
+    print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
     return 0
 
 

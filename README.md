@@ -1,26 +1,43 @@
 # codebase-audit
 
-Cursor Agent Skill — whole-repo (or path-scoped) **architecture and maintainability** audit with evidence-backed findings. No patches, no OWASP/SAST pipeline.
+Agent Skill — whole-repo (or path-scoped) **architecture and maintainability** audit with evidence-backed findings. No patches, no OWASP/SAST pipeline.
 
 Works on **macOS, Linux, and Windows** (Python 3 only for scripts; default mode is static).
 
 ## What you get
 
 - Phased audit: map → structure → architecture → security architecture → completeness → report
-- Bundled measurement scripts (`inventory`, `docs-check`, `promises`, `import-sample`, `stub-scan`, `runtime-check`, `drift`)
-- Project report: `docs/codebase-audit/YYYY-MM-DD.md` + JSON sidecar + Open canvas
+- One-shot measurement (`scripts/run.py`) plus drift
+- Project report: `docs/codebase-audit/YYYY-MM-DD.md` + JSON sidecar
+- Cursor extra: Open canvas (same full report). Other tools: md+json is complete
 - Drift across runs via fingerprint (`severity|category|path`), not `CA-NNN` (IDs reset every run)
 
 **Not for:** git-diff persona review (`adversarial-reviewer`), vulnerability hunting (`security-check`), or auto-fixes.
 
 ## Requirements
 
-| Tool | Required | Notes |
+| Need | Required | Notes |
 |------|----------|--------|
-| [Cursor](https://cursor.com) | yes | Agent Skills enabled |
-| Python 3.10+ | yes | `python` or `py -3` on Windows |
+| Python 3.10+ | yes | `python3`, `python`, or `py -3` |
+| One host below | yes | Agent Skills / `$skill` / slash |
 | Git | optional | secret `tracked` / `ignored` severity |
 | Node / Go / etc. | optional | only for `/codebase-audit --runtime` |
+| `rtk` | optional | if present, prefix script commands with `rtk proxy ` |
+
+### Hosts (user-level install)
+
+`~` = home directory (`%USERPROFILE%` on Windows).
+
+| Host | Official user path | `install.sh` / `install.ps1` |
+|------|--------------------|------------------------------|
+| [Cursor](https://cursor.com/docs/skills) | `~/.agents/skills/` and `~/.cursor/skills/` | copy to agents; link Cursor if `~/.cursor` exists |
+| [Claude Code](https://code.claude.com/docs/en/skills) | `~/.claude/skills/<name>/` | link if `~/.claude` exists |
+| [Codex](https://learn.chatgpt.com/docs/build-skills) | `$HOME/.agents/skills` | copy only — do **not** write `~/.codex/skills` (installer catalog) |
+| [Antigravity](https://antigravity.google/docs/skills) | `~/.gemini/config/skills/<name>/` | link if `~/.gemini/config` exists |
+
+If a host skills directory is already a symlink to `~/.agents/skills`, the extra per-skill link is skipped (does not delete the skill).
+
+**Not installed:** Gemini CLI (`~/.gemini/skills`). Antigravity’s global path lives under `~/.gemini/config/skills` — that folder is Antigravity, not Gemini CLI. Do not put this skill in `~/.gemini/antigravity-cli/skills/` (flat markdown slash files, not Agent Skills folders).
 
 ## Install
 
@@ -32,11 +49,6 @@ cd "$env:USERPROFILE\codebase-audit"
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Restart Cursor (or reload window). Skill path:
-
-- `%USERPROFILE%\.agents\skills\codebase-audit`
-- `%USERPROFILE%\.cursor\skills\codebase-audit` (junction → agents)
-
 ### macOS / Linux
 
 ```bash
@@ -46,13 +58,16 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### Manual (any OS)
+Restart the host (or reload the window).
 
-Clone into Cursor skills directory:
+### Manual
+
+Copy the repo (minus `.git`) to `~/.agents/skills/codebase-audit/` so Cursor and Codex see it. Then, only if that host’s skills dir is a **real directory** (not already a symlink to `~/.agents/skills`):
 
 ```text
-~/.cursor/skills/codebase-audit/     # macOS/Linux
-%USERPROFILE%\.cursor\skills\codebase-audit\   # Windows
+~/.cursor/skills/codebase-audit      →  ~/.agents/skills/codebase-audit
+~/.claude/skills/codebase-audit      →  ~/.agents/skills/codebase-audit
+~/.gemini/config/skills/codebase-audit → ~/.agents/skills/codebase-audit
 ```
 
 Repo root must contain `SKILL.md`, `references/`, `scripts/`.
@@ -66,7 +81,7 @@ python scripts\self-check.py         # Windows
 
 Expected output: `ok`
 
-## Usage in Cursor
+## Usage
 
 ```
 /codebase-audit
@@ -74,9 +89,9 @@ Expected output: `ok`
 /codebase-audit --runtime
 ```
 
-Default is **static** (scripts only). `--runtime` runs allowlisted safe test plans (never `make`, `curl`, `xcodebuild`, `gradlew`).
+Codex: `$codebase-audit` or `/skills`. Default is **static**. `--runtime` runs allowlisted safe test plans (never `make`, `curl`, `xcodebuild`, `gradlew`).
 
-Chat output: verdict + path to `docs/codebase-audit/<date>.md` (+ `.json`) + canvas link.
+Chat: `Sonuç:` + path to `docs/codebase-audit/<date>.md` (+ `.json`). Canvas link only on Cursor after a canvas is written.
 
 ## Layout
 
@@ -84,7 +99,7 @@ Chat output: verdict + path to `docs/codebase-audit/<date>.md` (+ `.json`) + can
 codebase-audit/
 ├── SKILL.md
 ├── references/          # phase guides (loaded on demand)
-├── scripts/             # measurement + drift (Python 3)
+├── scripts/             # measurement + drift + install_links (Python 3)
 ├── install.sh
 ├── install.ps1
 └── README.md
@@ -95,7 +110,11 @@ codebase-audit/
 - Static audit: full support.
 - `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted.
 - `xcodebuild` / Swift / iOS plans are detected but not executed (same on all OS).
-- Canvas files: `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
+- Canvas files (Cursor): `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
+
+## v1.2.0
+
+User-facing report labels in Turkish; JSON sidecar stays English. One-shot compact `run.py`. Canvas is Cursor-only and is not required for a complete audit. Installer links Claude + Antigravity and refuses to delete a skills dir that is already the agents SSOT.
 
 ## v1.1.0
 

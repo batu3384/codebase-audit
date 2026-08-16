@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install codebase-audit into ~/.agents/skills and link ~/.cursor/skills (macOS/Linux).
+# Install codebase-audit into ~/.agents/skills, then link Cursor / Claude / Antigravity.
+# Skip a link when that skills dir is already the agents SSOT (symlink farm).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 AGENTS="${AGENTS_DIR:-$HOME/.agents/skills}/codebase-audit"
-CURSOR="${CURSOR_SKILLS_DIR:-$HOME/.cursor/skills}/codebase-audit"
 
-mkdir -p "$(dirname "$AGENTS")" "$(dirname "$CURSOR")"
+mkdir -p "$(dirname "$AGENTS")"
 
 if [[ -e "$AGENTS" ]]; then
   rm -rf "$AGENTS"
@@ -15,16 +15,16 @@ mkdir -p "$AGENTS"
 cp -R "$REPO_ROOT/." "$AGENTS/"
 rm -rf "$AGENTS/.git"
 
-if [[ -e "$CURSOR" ]]; then
-  rm -rf "$CURSOR"
+PY="${PYTHON:-python3}"
+if ! command -v "$PY" >/dev/null 2>&1; then
+  echo "WARN: python3 not found — skip self-check and tool links" >&2
+  echo "Installed: $AGENTS"
+  exit 0
 fi
-ln -s "$AGENTS" "$CURSOR"
 
-if command -v python3 >/dev/null 2>&1; then
-  python3 "$AGENTS/scripts/self-check.py"
-else
-  echo "WARN: python3 not found — skip self-check"
-fi
+"$PY" "$AGENTS/scripts/install_links.py" --agents "$AGENTS"
+"$PY" "$AGENTS/scripts/self-check.py"
 
 echo "Installed: $AGENTS"
-echo "Cursor:    $CURSOR"
+echo "Codex reads ~/.agents/skills (no extra link)."
+echo "Skipped on purpose: ~/.gemini/skills (Gemini CLI), ~/.codex/skills (catalog)."

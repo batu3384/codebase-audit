@@ -1,8 +1,10 @@
 # Phase 2 — Architecture
 
-Load only during phase 2. Full-file reads this phase: at most 15.
+Load only during phase 2. Full-file reads this phase: at most 15 (hand-reads, not a findings quota). Do not skip this phase to save tokens.
 
 This is a **sampled graph**, not a complete program-analysis.
+
+Use `run.py` key `import-sample`. Do not re-run `import-sample.py` unless that key is missing. Fallback command below (no `rtk` → drop `rtk proxy `).
 
 ## Import edges (mandatory script)
 
