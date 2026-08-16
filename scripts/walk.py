@@ -269,6 +269,7 @@ class WalkCover(NamedTuple):
     skipped_symlink_dirs: int
     skipped_unreadable: int
     skipped_walk_errors: int
+    skipped_symlink_files: int
 
     @property
     def walk_complete(self) -> bool:
@@ -286,6 +287,7 @@ def coverage_json(cover: WalkCover) -> dict:
         "skipped_symlink_dirs": cover.skipped_symlink_dirs,
         "skipped_unreadable": cover.skipped_unreadable,
         "skipped_walk_errors": cover.skipped_walk_errors,
+        "skipped_symlink_files": cover.skipped_symlink_files,
         "walk_complete": cover.walk_complete,
     }
 
@@ -442,6 +444,7 @@ def walk_tree(root: Path) -> WalkCover:
     skipped_symlink_dirs = 0
     skipped_unreadable = 0
     skipped_walk_errors = 0
+    skipped_symlink_files = 0
 
     def onerror(_err: OSError) -> None:
         nonlocal skipped_walk_errors
@@ -494,16 +497,22 @@ def walk_tree(root: Path) -> WalkCover:
                     skipped_unreadable += 1
                     continue
                 if stat.S_ISREG(rst.st_mode):
-                    out.append(p)
-                else:
-                    skipped_special += 1
-                continue
+                    if resolved_is_secret(p, root):
+                        out.append(p)
+                    else:
+                        skipped_symlink_files += 1
+                    continue
             if stat.S_ISREG(st.st_mode):
                 out.append(p)
             else:
                 skipped_special += 1
     return WalkCover(
-        out, skipped_special, skipped_symlink_dirs, skipped_unreadable, skipped_walk_errors
+        out,
+        skipped_special,
+        skipped_symlink_dirs,
+        skipped_unreadable,
+        skipped_walk_errors,
+        skipped_symlink_files,
     )
 
 

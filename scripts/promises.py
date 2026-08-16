@@ -101,9 +101,13 @@ def main() -> int:
         scanned += 1
         text = read_text(pkg, root) or ""
         try:
-            scripts = (json.loads(text).get("scripts") or {}) if text else {}
-            blob = " ".join(str(v) for v in scripts.values())
+            parsed = json.loads(text) if text else {}
         except json.JSONDecodeError:
+            parsed = None
+        scripts = parsed.get("scripts") if isinstance(parsed, dict) else None
+        if isinstance(scripts, dict):
+            blob = " ".join(str(v) for v in scripts.values())
+        else:
             blob = text
         for spec in extract_paths(blob):
             if not (root / spec).exists():

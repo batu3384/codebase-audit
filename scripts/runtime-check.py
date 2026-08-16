@@ -18,6 +18,7 @@ from walk import (
     coverage_json,
     find_xcode_bundles,
     readable_in_tree,
+    redact_secrets,
     redact_tail,
     walk_tree,
 )
@@ -63,7 +64,9 @@ CHILD_ENV_KEEP = (
 )
 
 
-def classify_script(body: str) -> str:
+def classify_script(body: object) -> str:
+    if not isinstance(body, str):
+        return "review"
     b = " ".join(body.strip().split())
     if not b or b in ("exit 1", "echo not implemented", "false"):
         return "placeholder"
@@ -172,7 +175,7 @@ def kill_group(proc: subprocess.Popen[str]) -> None:
             pass
 
 
-def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
+def run_cmd(cmd: list[str], cwd: Path, timeout: float) -> dict:
     kwargs: dict = {
         "cwd": cwd,
         "stdout": subprocess.PIPE,
@@ -249,29 +252,60 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
     if readable_in_tree(pkg_json, root):
         try:
             data = json.loads(pkg_json.read_text(encoding="utf-8"))
-            test = (data.get("scripts") or {}).get("test")
-            if test:
-                plans.append(
-                    {
-                        "kind": "npm-test",
-                        "manifest": str(pkg_json),
-                        "body": test,
-                        "class": classify_script(test),
-                        "package": rel,
-                        "cwd": str(pkg),
-                    }
-                )
         except json.JSONDecodeError:
+            data = None
+        if not isinstance(data, dict):
             plans.append(
                 {
                     "kind": "npm-test",
                     "manifest": str(pkg_json),
-                    "error": "invalid json",
+                    "error": "invalid manifest",
                     "class": "review",
                     "package": rel,
                     "cwd": str(pkg),
                 }
             )
+        else:
+            scripts = data.get("scripts")
+            if scripts is None:
+                pass
+            elif not isinstance(scripts, dict):
+                plans.append(
+                    {
+                        "kind": "npm-test",
+                        "manifest": str(pkg_json),
+                        "error": "invalid scripts shape",
+                        "class": "review",
+                        "package": rel,
+                        "cwd": str(pkg),
+                    }
+                )
+            else:
+                test = scripts.get("test")
+                if test is None:
+                    pass
+                elif not isinstance(test, str):
+                    plans.append(
+                        {
+                            "kind": "npm-test",
+                            "manifest": str(pkg_json),
+                            "error": "invalid scripts.test shape",
+                            "class": "review",
+                            "package": rel,
+                            "cwd": str(pkg),
+                        }
+                    )
+                elif test:
+                    plans.append(
+                        {
+                            "kind": "npm-test",
+                            "manifest": str(pkg_json),
+                            "body": redact_secrets(test)[:200],
+                            "class": classify_script(test),
+                            "package": rel,
+                            "cwd": str(pkg),
+                        }
+                    )
 
     if readable_in_tree(pkg / "go.mod", root):
         plans.append(
@@ -318,7 +352,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
                     {
                         "kind": f"make-{target}",
                         "manifest": str(makefile),
-                        "body": body,
+                        "body": redact_secrets(body)[:200],
                         "class": classify_script(body),
                         "package": rel,
                         "cwd": str(pkg),
@@ -409,7 +443,7 @@ def detect(root: Path) -> tuple[list[dict], bool, object, int]:
     return plans, complete, cover, skipped_outside
 
 
-def execute_plan(plan: dict, timeout: int) -> dict:
+def execute_plan(plan: dict, timeout: float) -> dict:
     cwd = Path(plan.get("cwd") or plan.get("manifest") or ".")
     if plan.get("class") != EXECUTABLE:
         return {"skipped": True, "reason": f"class={plan.get('class')}", "cwd": str(cwd)}
@@ -509,16 +543,15 @@ def main() -> int:
                 continue
             queue.append(pl)
         executed: list[dict] = []
-        remaining = args.timeout
+        deadline = time.monotonic() + args.timeout
         for pl in queue:
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 executed.append(
                     {"skipped": True, "reason": "timeout budget", "kind": pl.get("kind")}
                 )
                 continue
-            t0 = time.monotonic()
             executed.append(execute_plan(pl, remaining))
-            remaining = max(0, remaining - int(time.monotonic() - t0))
         out["executed"] = executed
         if not queue:
             out["executed"] = [{"skipped": True, "reason": "no executable plan"}]

@@ -118,7 +118,14 @@ def swap_in(staged: Path, dest: Path) -> None:
 
 
 def run_py(script: Path, args: list[str]) -> None:
-    r = subprocess.run([sys.executable, str(script), *args], cwd=str(script.parent))
+    try:
+        r = subprocess.run(
+            [sys.executable, str(script), *args],
+            cwd=str(script.parent),
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(124)
     if r.returncode != 0:
         raise SystemExit(r.returncode)
 

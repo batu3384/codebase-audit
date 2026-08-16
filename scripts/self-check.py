@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from check_extra import extra_errors
+from check_extra import extra_errors, run
 
 SCRIPTS = Path(__file__).resolve().parent
 PY = sys.executable
-
-
-def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, cwd=str(SCRIPTS))
 
 
 def run_resolve(ws: Path, audit: str | None) -> tuple[int, str]:

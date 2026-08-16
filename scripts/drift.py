@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -53,7 +54,17 @@ def public_item(item: dict) -> dict:
     }
 
 
+def is_regular_file(path: Path) -> bool:
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
 def load_sidecar(path: Path) -> dict:
+    if not is_regular_file(path):
+        raise ValueError("sidecar must be a regular file")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -116,7 +127,7 @@ def older_sidecars(folder: Path, current: Path) -> list[Path]:
     rows: list[tuple[tuple[str, int], Path]] = []
     cur_res = current.resolve()
     for p in folder.glob("*.json"):
-        if not p.is_file() or p.resolve() == cur_res:
+        if not is_regular_file(p) or p.resolve() == cur_res:
             continue
         key = stem_key(p)
         if key is None or key >= cur_key:
@@ -158,6 +169,9 @@ def main() -> int:
     args = ap.parse_args()
     ws, _root = require_inside(args.workspace, args.workspace)
     sidecar = args.sidecar.expanduser().resolve()
+    if not is_regular_file(args.sidecar.expanduser()):
+        print(f"STOP sidecar missing or not a regular file: {args.sidecar}", file=sys.stderr)
+        return 2
     if not sidecar.is_file():
         print(f"STOP sidecar missing: {sidecar}", file=sys.stderr)
         return 2

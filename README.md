@@ -162,6 +162,8 @@ git pull
 
 ## Changelog
 
+**v1.3.2** — Manifest shape guards (no child crash on odd JSON); runtime plan bodies redacted; in-tree file symlinks counted once; host-link frontmatter ownership + home containment; self-check timeouts; monotonic `--run` deadline; drift ignores sidecar symlinks.
+
 **v1.3.1** — Fail-closed outside symlink manifests; `WalkCover` on every child JSON; installer symlink guards; schema type checks; Windows `taskkill /T`.
 
 **v1.3.0** — Child JSON schema validation; nested package discovery; `executable` runtime class; expanded redaction; staged install.

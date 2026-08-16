@@ -7,6 +7,7 @@ WALK_KEYS = frozenset(
         "skipped_symlink_dirs",
         "skipped_unreadable",
         "skipped_walk_errors",
+        "skipped_symlink_files",
         "walk_complete",
     }
 )
@@ -93,6 +94,7 @@ INT_NONNEG = frozenset(
         "skipped_symlink_dirs",
         "skipped_unreadable",
         "skipped_walk_errors",
+        "skipped_symlink_files",
         "skipped_large",
         "line_count_truncated",
         "todo_skipped_large",

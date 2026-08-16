@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from paths import home_ok
+from paths import home_ok, inside
 
 
 def real(path: Path) -> Path | None:
@@ -18,6 +18,19 @@ def real(path: Path) -> Path | None:
         return path.resolve()
     except OSError:
         return None
+
+
+def skill_frontmatter_name(text: str) -> str | None:
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        raw = line.strip()
+        if raw.startswith("name:"):
+            return raw.split(":", 1)[1].strip().strip("'\"")
+    return None
 
 
 def is_our_skill_dir(dest: Path) -> bool:
@@ -32,7 +45,32 @@ def is_our_skill_dir(dest: Path) -> bool:
         text = skill.read_text(encoding="utf-8", errors="replace")[:4000]
     except OSError:
         return False
-    return "name: codebase-audit" in text
+    return skill_frontmatter_name(text) == "codebase-audit"
+
+
+def path_stays_in_home(path: Path, home: Path) -> str | None:
+    home_r = real(home)
+    if home_r is None:
+        return "unreadable home"
+    home_exp = home.expanduser()
+    cur = path.expanduser()
+    chain = [cur]
+    while home_exp in cur.parents:
+        cur = cur.parent
+        chain.append(cur)
+    for p in reversed(chain):
+        try:
+            present = p.exists() or p.is_symlink()
+        except OSError as e:
+            return str(e)
+        if not present:
+            continue
+        target = real(p)
+        if target is None:
+            return f"unreadable {p}"
+        if not inside(target, home_r):
+            return f"escapes home: {p}"
+    return None
 
 
 def make_link(dest: Path, target: Path) -> None:
@@ -48,16 +86,32 @@ def make_link(dest: Path, target: Path) -> None:
     os.symlink(target, dest, target_is_directory=True)
 
 
-def link_one(parent: Path, agents: Path, label: str) -> str:
-    """Return a status line. Never delete the agents tree."""
+def link_one(parent: Path, agents: Path, label: str, home: Path) -> str:
+    """Return a status line. Never delete the agents tree. Never follow host parent out of home."""
     agents_real = real(agents)
+    home_real = real(home)
     if agents_real is None or not agents_real.is_dir():
         return f"fail {label}: missing {agents}"
+    if home_real is None:
+        return f"fail {label}: unreadable home"
 
-    parent.mkdir(parents=True, exist_ok=True)
+    err = path_stays_in_home(parent, home)
+    if err:
+        return f"fail {label}: {err}"
+
+    if parent.exists() or parent.is_symlink():
+        parent_real = real(parent)
+        if parent_real is not None and parent_real == agents_real.parent:
+            return f"skip {label}: {parent} already SSOT"
+    else:
+        parent.mkdir(parents=True, exist_ok=True)
+        err = path_stays_in_home(parent, home)
+        if err:
+            return f"fail {label}: {err}"
+
     parent_real = real(parent)
-    if parent_real is not None and parent_real == agents_real.parent:
-        return f"skip {label}: {parent} already SSOT"
+    if parent_real is None or not inside(parent_real, home_real):
+        return f"fail {label}: parent outside home {parent}"
 
     dest = parent / "codebase-audit"
     if dest.exists() or dest.is_symlink():
@@ -68,7 +122,9 @@ def link_one(parent: Path, agents: Path, label: str) -> str:
             dest_real == agents_real.parent or agents_real in dest_real.parents
         ):
             return f"skip {label}: refuse rm of SSOT {dest}"
-        if dest.is_symlink() or dest.is_file():
+        if dest.is_symlink():
+            return f"fail {label}: refuse rm of foreign symlink {dest}"
+        if dest.is_file():
             dest.unlink()
         elif is_our_skill_dir(dest):
             shutil.rmtree(dest)
@@ -117,7 +173,7 @@ def main() -> int:
         return 1
     failed = False
     for parent, label in plan(home):
-        line = link_one(parent, agents, label)
+        line = link_one(parent, agents, label, home)
         print(line)
         if line.startswith("fail "):
             failed = True

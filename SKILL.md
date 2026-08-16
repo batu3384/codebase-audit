@@ -9,7 +9,7 @@ description: >
   not for OWASP/SAST vulnerability hunting, not for applying fixes.
 license: MIT
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
   homepage: https://github.com/batu3384/codebase-audit
   keywords: architecture audit codebase maintainability structure
 ---

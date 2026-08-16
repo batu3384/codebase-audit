@@ -80,6 +80,8 @@ def manifest_entrypoints(root: Path) -> list[str]:
         data = json.loads(pkg.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
+    if not isinstance(data, dict):
+        return []
     specs: list[str] = []
     main = data.get("main")
     if isinstance(main, str) and main.strip():

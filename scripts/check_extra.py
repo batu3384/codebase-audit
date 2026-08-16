@@ -13,8 +13,15 @@ SCRIPTS = Path(__file__).resolve().parent
 PY = sys.executable
 
 
-def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, cwd=str(SCRIPTS))
+def run(args: list[str], timeout: int = 45) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args, capture_output=True, text=True, cwd=str(SCRIPTS), timeout=timeout
+        )
+    except subprocess.TimeoutExpired as e:
+        return subprocess.CompletedProcess(
+            args, 124, e.stdout or "", (e.stderr or "") + "\ntimeout"
+        )
 
 
 def extra_errors() -> list[str]:
@@ -113,6 +120,7 @@ def extra_errors() -> list[str]:
             "skipped_symlink_dirs": 0,
             "skipped_unreadable": 0,
             "skipped_walk_errors": 0,
+            "skipped_symlink_files": 0,
             "walk_complete": True,
         },
         bundle_root="/tmp/x",
@@ -132,6 +140,7 @@ def extra_errors() -> list[str]:
             "skipped_symlink_dirs": 0,
             "skipped_unreadable": 0,
             "skipped_walk_errors": 0,
+            "skipped_symlink_files": 0,
             "walk_complete": True,
         },
         bundle_root="/tmp/x",
@@ -310,7 +319,7 @@ def extra_errors() -> list[str]:
         (home / ".claude").mkdir()
         foreign = home / ".claude" / "skills" / "codebase-audit"
         foreign.mkdir(parents=True)
-        (foreign / "SKILL.md").write_text("keep\n")
+        (foreign / "SKILL.md").write_text("docs mention name: codebase-audit\nkeep\n")
         r = run(
             [
                 PY,
@@ -321,7 +330,7 @@ def extra_errors() -> list[str]:
                 str(skill),
             ]
         )
-        if (foreign / "SKILL.md").read_text() != "keep\n":
+        if (foreign / "SKILL.md").read_text() != "docs mention name: codebase-audit\nkeep\n":
             errors.append("install_links deleted foreign skill dir")
         if r.returncode != 1:
             errors.append(f"foreign skill dir should fail install_links, got {r.returncode} {r.stdout}")
@@ -416,6 +425,148 @@ def extra_errors() -> list[str]:
         data2 = json.loads(r2.stdout)
         if "walk_complete" not in data2:
             errors.append("stub-scan missing walk_complete")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "secretplan"
+        proj.mkdir()
+        (proj / "package.json").write_text(
+            '{"scripts":{"test":"jest sk-live-abcdef1234"}}'
+        )
+        r = run([PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj)])
+        if r.returncode != 0:
+            errors.append(f"runtime secret plan failed: {r.stderr}")
+        elif "sk-live-abcdef1234" in r.stdout:
+            errors.append("runtime plan leaked token-shaped script body")
+        else:
+            data = json.loads(r.stdout)
+            kinds = [p.get("class") for p in data.get("plans") or []]
+            if "executable" not in kinds:
+                errors.append(f"redacted jest plan should stay executable, plans={data.get('plans')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "shapert"
+        proj.mkdir()
+        (proj / "package.json").write_text('{"scripts":{"test":{"cmd":"jest"}}}')
+        r = run([PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj)])
+        if r.returncode != 0:
+            errors.append(f"dict scripts.test should not crash, {r.stderr}")
+        else:
+            data = json.loads(r.stdout)
+            errs = [p.get("error") for p in data.get("plans") or []]
+            if not any(e and "shape" in str(e) for e in errs):
+                errors.append(f"dict scripts.test should be invalid shape, plans={data.get('plans')}")
+        (proj / "package.json").write_text('{"scripts":["jest"]}')
+        r2 = run([PY, str(SCRIPTS / "promises.py"), str(proj), str(proj)])
+        if r2.returncode != 0:
+            errors.append(f"list scripts should not crash promises, {r2.stderr}")
+        r3 = run([PY, str(SCRIPTS / "run.py"), str(proj)])
+        if r3.returncode != 0:
+            errors.append(f"odd manifest shape should not incomplete bundle, {r3.stderr} {r3.stdout[-200:]}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "aliaswalk"
+        proj.mkdir()
+        (proj / "real.py").write_text("x=1\n# TODO later\n")
+        (proj / "alias.py").symlink_to(proj / "real.py")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        tops = [x.get("path") for x in data.get("top_by_lines") or []]
+        if "alias.py" in tops:
+            errors.append(f"in-tree file symlink should not be line-counted, got {tops}")
+        if data.get("skipped_symlink_files", 0) < 1:
+            errors.append(f"in-tree file symlink should set skipped_symlink_files, got {data}")
+        if data.get("todo_count", 0) < 1:
+            errors.append("canonical TODO should still be counted")
+        if data.get("complete_scan") is not True:
+            errors.append(f"alias skip should not fail complete_scan, got {data.get('complete_scan')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"
+        home.mkdir()
+        outside = Path(td) / "outside"
+        outside.mkdir()
+        skill = home / ".agents" / "skills" / "codebase-audit"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: codebase-audit\n---\n")
+        (home / ".claude").mkdir()
+        (home / ".claude" / "skills").symlink_to(outside)
+        r = run(
+            [
+                PY,
+                str(SCRIPTS / "install_links.py"),
+                "--home",
+                str(home),
+                "--agents",
+                str(skill),
+            ]
+        )
+        if (outside / "codebase-audit").exists():
+            errors.append("install_links wrote through host parent symlink")
+        if r.returncode != 1 or "escapes home" not in (r.stdout or ""):
+            errors.append(f"parent symlink escape should fail, got {r.returncode} {r.stdout!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        skill = home / ".agents" / "skills" / "codebase-audit"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: codebase-audit\n---\n")
+        (home / ".claude").mkdir()
+        other = home / "other-skill"
+        other.mkdir()
+        (other / "SKILL.md").write_text("keep\n")
+        dest = home / ".claude" / "skills" / "codebase-audit"
+        dest.parent.mkdir(parents=True)
+        dest.symlink_to(other)
+        r = run(
+            [
+                PY,
+                str(SCRIPTS / "install_links.py"),
+                "--home",
+                str(home),
+                "--agents",
+                str(skill),
+            ]
+        )
+        if dest.resolve() != other.resolve():
+            errors.append(f"foreign symlink pointer should stay, got {dest.resolve() if dest.exists() else None}")
+        if r.returncode != 1 or "foreign symlink" not in (r.stdout or ""):
+            errors.append(f"foreign symlink should refuse, got {r.returncode} {r.stdout!r}")
+        if (other / "SKILL.md").read_text() != "keep\n":
+            errors.append("foreign symlink target mutated")
+
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td) / "driftws"
+        folder = ws / "docs" / "codebase-audit"
+        folder.mkdir(parents=True)
+        payload = {
+            "schema": 1,
+            "skill": "codebase-audit",
+            "date": "2026-08-13",
+            "root": str(ws),
+            "verdict": "CLEAN",
+            "findings": [],
+        }
+        outside = Path(td) / "outside.json"
+        outside.write_text(json.dumps(payload), encoding="utf-8")
+        (folder / "2026-08-13.json").symlink_to(outside)
+        payload["date"] = "2026-08-16"
+        cur = folder / "2026-08-16.json"
+        cur.write_text(json.dumps(payload), encoding="utf-8")
+        r = run([PY, str(SCRIPTS / "drift.py"), str(ws), str(cur)])
+        if r.returncode != 0:
+            errors.append(f"drift symlink previous should skip, {r.stderr}")
+        else:
+            data = json.loads(r.stdout)
+            if data.get("previous") is not None:
+                errors.append(f"symlink previous sidecar should be ignored, got {data.get('previous')}")
+
+    src = (SCRIPTS / "check_extra.py").read_text(encoding="utf-8")
+    if "timeout=" not in src.split("def run", 1)[-1][:400]:
+        errors.append("check_extra.run must pass subprocess timeout")
+    if "deadline = time.monotonic()" not in (SCRIPTS / "runtime-check.py").read_text(
+        encoding="utf-8"
+    ):
+        errors.append("runtime-check must use monotonic deadline")
 
     return errors
 
