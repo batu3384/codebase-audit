@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import MAX_READ_BYTES, is_generated, resolved_is_secret, walk_files
+from walk import MAX_READ_BYTES, coverage_json, is_generated, readable_in_tree, walk_tree
 
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 BACKTICK_PATH = re.compile(
@@ -32,6 +32,7 @@ def main() -> int:
     args = ap.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
+    cover = walk_tree(root)
     broken: list[dict] = []
     promised_missing: list[dict] = []
     md_seen = 0
@@ -42,8 +43,8 @@ def main() -> int:
     md_cap = False
     promised_cap = False
 
-    for p in walk_files(root):
-        if resolved_is_secret(p, root) or is_generated(p.name):
+    for p in cover.files:
+        if not readable_in_tree(p, root) or is_generated(p.name):
             continue
         if not (p.name.startswith("README") or p.suffix.lower() == ".md"):
             continue
@@ -95,7 +96,12 @@ def main() -> int:
                         promised_cap = True
                         break
 
-    promised_complete = (not promised_cap) and skipped_large == 0 and unreadable == 0
+    promised_complete = (
+        (not promised_cap)
+        and skipped_large == 0
+        and unreadable == 0
+        and cover.walk_complete
+    )
     out = {
         "root": str(root),
         "md_files_seen": md_seen,
@@ -107,7 +113,8 @@ def main() -> int:
         "promised_missing_complete": promised_complete,
         "skipped_large": skipped_large,
         "unreadable": unreadable,
-        "truncated": md_cap or len(broken) >= 40 or promised_cap or skipped_large > 0,
+        "truncated": md_cap or len(broken) >= 40 or promised_cap or skipped_large > 0 or not cover.walk_complete,
+        **coverage_json(cover),
         "note": "in-repo relative links + README backtick paths; no NLP feature list",
     }
     print(json.dumps(out, indent=2))

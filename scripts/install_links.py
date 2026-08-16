@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
+
+from paths import home_ok
 
 
 def real(path: Path) -> Path | None:
@@ -15,6 +18,21 @@ def real(path: Path) -> Path | None:
         return path.resolve()
     except OSError:
         return None
+
+
+def is_our_skill_dir(dest: Path) -> bool:
+    skill = dest / "SKILL.md"
+    try:
+        st = skill.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        return False
+    try:
+        text = skill.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return False
+    return "name: codebase-audit" in text
 
 
 def make_link(dest: Path, target: Path) -> None:
@@ -52,8 +70,10 @@ def link_one(parent: Path, agents: Path, label: str) -> str:
             return f"skip {label}: refuse rm of SSOT {dest}"
         if dest.is_symlink() or dest.is_file():
             dest.unlink()
-        else:
+        elif is_our_skill_dir(dest):
             shutil.rmtree(dest)
+        else:
+            return f"fail {label}: refuse rm of foreign {dest}"
 
     make_link(dest, agents_real)
     return f"linked {label}: {dest} -> {agents_real}"
@@ -86,14 +106,22 @@ def main() -> int:
         help="Installed skill dir (default: <home>/.agents/skills/codebase-audit)",
     )
     args = ap.parse_args()
+    home_err = home_ok(args.home)
+    if home_err:
+        sys.stderr.write(f"install refuse: {home_err}\n")
+        return 2
     home = args.home
     agents = args.agents or (home / ".agents" / "skills" / "codebase-audit")
     if not agents.is_dir():
         sys.stderr.write(f"missing install target {agents}\n")
         return 1
+    failed = False
     for parent, label in plan(home):
-        print(link_one(parent, agents, label))
-    return 0
+        line = link_one(parent, agents, label)
+        print(line)
+        if line.startswith("fail "):
+            failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

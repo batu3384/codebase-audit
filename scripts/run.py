@@ -75,7 +75,7 @@ def main() -> int:
         stem = name.replace(".py", "")
         blob = run_one(name, pair + extra, args.timeout)
         out[stem] = blob
-        err = validate_child(stem, blob)
+        err = validate_child(stem, blob, bundle_root=root)
         if err:
             out["incomplete"] = True
             out["incomplete_reason"] = err

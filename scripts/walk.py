@@ -268,6 +268,48 @@ class WalkCover(NamedTuple):
     skipped_special: int
     skipped_symlink_dirs: int
     skipped_unreadable: int
+    skipped_walk_errors: int
+
+    @property
+    def walk_complete(self) -> bool:
+        return (
+            self.skipped_special == 0
+            and self.skipped_unreadable == 0
+            and self.skipped_symlink_dirs == 0
+            and self.skipped_walk_errors == 0
+        )
+
+
+def coverage_json(cover: WalkCover) -> dict:
+    return {
+        "skipped_special": cover.skipped_special,
+        "skipped_symlink_dirs": cover.skipped_symlink_dirs,
+        "skipped_unreadable": cover.skipped_unreadable,
+        "skipped_walk_errors": cover.skipped_walk_errors,
+        "walk_complete": cover.walk_complete,
+    }
+
+
+def readable_in_tree(path: Path, root: Path) -> bool:
+    """False for secrets, outside/broken symlinks, and non-regular files."""
+    if resolved_is_secret(path, root):
+        return False
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return False
+        if not inside(resolved, root):
+            return False
+        try:
+            return stat.S_ISREG(resolved.stat().st_mode)
+        except OSError:
+            return False
+    return stat.S_ISREG(st.st_mode)
 
 
 def is_test_file(rel: str, name: str) -> str | None:
@@ -399,7 +441,13 @@ def walk_tree(root: Path) -> WalkCover:
     skipped_special = 0
     skipped_symlink_dirs = 0
     skipped_unreadable = 0
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    skipped_walk_errors = 0
+
+    def onerror(_err: OSError) -> None:
+        nonlocal skipped_walk_errors
+        skipped_walk_errors += 1
+
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=onerror):
         base = Path(dirpath)
         keep: list[str] = []
         for d in sorted(dirnames):
@@ -454,20 +502,22 @@ def walk_tree(root: Path) -> WalkCover:
                 out.append(p)
             else:
                 skipped_special += 1
-    return WalkCover(out, skipped_special, skipped_symlink_dirs, skipped_unreadable)
+    return WalkCover(
+        out, skipped_special, skipped_symlink_dirs, skipped_unreadable, skipped_walk_errors
+    )
 
 
 def walk_files(root: Path) -> list[Path]:
     return walk_tree(root).files
 
 
-def line_count(path: Path) -> int:
+def line_count_ex(path: Path) -> tuple[int, bool]:
     try:
         st = path.lstat()
     except OSError:
-        return 0
+        return 0, False
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-        return 0
+        return 0, False
     n = 0
     read = 0
     try:
@@ -476,21 +526,26 @@ def line_count(path: Path) -> int:
                 read += len(line)
                 n += 1
                 if read > MAX_LINECOUNT_BYTES or n > MAX_LINECOUNT_LINES:
-                    return n
+                    return n, True
     except OSError:
-        return 0
+        return 0, False
+    return n, False
+
+
+def line_count(path: Path) -> int:
+    n, _trunc = line_count_ex(path)
     return n
 
 
-def scan_todo(path: Path, rel: str, nlines: int) -> tuple[int, list[str]]:
+def scan_todo(path: Path, rel: str, nlines: int) -> tuple[int, list[str], bool]:
     try:
         st = path.lstat()
         if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-            return 0, []
+            return 0, [], False
         if st.st_size > MAX_READ_BYTES:
-            return 0, []
+            return 0, [], True
     except OSError:
-        return 0, []
+        return 0, [], False
     count = 0
     samples: list[str] = []
     try:
@@ -503,8 +558,8 @@ def scan_todo(path: Path, rel: str, nlines: int) -> tuple[int, list[str]]:
                 if take and len(samples) < 20:
                     samples.append(f"{rel}:{i}:{redact(line.strip())}")
     except OSError:
-        return 0, []
-    return count, samples
+        return 0, [], False
+    return count, samples, False
 
 
 def todo_scanable(path: Path) -> bool:

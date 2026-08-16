@@ -13,7 +13,14 @@ import time
 from pathlib import Path
 
 from paths import require_inside
-from walk import PACKAGE_MARKERS, find_xcode_bundles, redact_tail, walk_files
+from walk import (
+    PACKAGE_MARKERS,
+    coverage_json,
+    find_xcode_bundles,
+    readable_in_tree,
+    redact_tail,
+    walk_tree,
+)
 
 UNSAFE_SHELL = re.compile(
     r"[|&;`$(){}><]|"
@@ -71,7 +78,7 @@ def classify_script(body: str) -> str:
     return "review"
 
 
-def python_project(root: Path) -> bool:
+def python_project(pkg: Path, tree: Path) -> bool:
     for n in (
         "pyproject.toml",
         "setup.py",
@@ -81,34 +88,36 @@ def python_project(root: Path) -> bool:
         "requirements-dev.txt",
         "environment.yml",
     ):
-        if (root / n).is_file():
+        if readable_in_tree(pkg / n, tree):
             return True
-    if any(p.is_file() for p in root.glob("*.py")):
+    if any(readable_in_tree(p, tree) for p in pkg.glob("*.py")):
         return True
-    src = root / "src"
-    if src.is_dir() and any(src.glob("*.py")):
+    src = pkg / "src"
+    if src.is_dir() and any(readable_in_tree(p, tree) for p in src.glob("*.py")):
         return True
     return False
 
 
-def pytest_evidence(root: Path) -> bool:
-    if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
+def pytest_evidence(pkg: Path, tree: Path) -> bool:
+    if readable_in_tree(pkg / "pytest.ini", tree) or readable_in_tree(pkg / "conftest.py", tree):
         return True
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file() and "[tool.pytest" in pyproject.read_text(
+    pyproject = pkg / "pyproject.toml"
+    if readable_in_tree(pyproject, tree) and "[tool.pytest" in pyproject.read_text(
         encoding="utf-8", errors="replace"
     ):
         return True
-    tests = root / "tests"
-    if tests.is_dir() and any(tests.rglob("*.py")):
+    tests = pkg / "tests"
+    if tests.is_dir() and any(readable_in_tree(p, tree) for p in tests.rglob("*.py")):
         return True
-    if any(root.glob("test_*.py")) or any(root.glob("*_test.py")):
+    if any(readable_in_tree(p, tree) for p in pkg.glob("test_*.py")) or any(
+        readable_in_tree(p, tree) for p in pkg.glob("*_test.py")
+    ):
         return True
     return False
 
 
-def read_make_recipe(makefile: Path, target: str) -> str | None:
-    if not makefile.is_file():
+def read_make_recipe(makefile: Path, target: str, tree: Path) -> str | None:
+    if not readable_in_tree(makefile, tree):
         return None
     lines = makefile.read_text(encoding="utf-8", errors="replace").splitlines()
     collecting = False
@@ -140,7 +149,19 @@ def pytest_cmd() -> list[str]:
 
 def kill_group(proc: subprocess.Popen[str]) -> None:
     if os.name == "nt":
-        proc.kill()
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
         return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
@@ -192,12 +213,16 @@ def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
     }
 
 
-def package_roots(root: Path) -> tuple[list[Path], bool]:
+def package_roots(root: Path, files: list[Path]) -> tuple[list[Path], bool, int]:
     found = [root]
     seen = {root.resolve()}
     complete = True
-    for p in walk_files(root):
+    skipped_outside = 0
+    for p in files:
         if p.name not in PACKAGE_MARKERS:
+            continue
+        if not readable_in_tree(p, root):
+            skipped_outside += 1
             continue
         d = p.parent
         rd = d.resolve()
@@ -208,7 +233,7 @@ def package_roots(root: Path) -> tuple[list[Path], bool]:
             break
         seen.add(rd)
         found.append(d)
-    return found, complete
+    return found, complete, skipped_outside
 
 
 def pkg_rel(pkg: Path, root: Path) -> str:
@@ -221,7 +246,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
     plans: list[dict] = []
     rel = pkg_rel(pkg, root)
     pkg_json = pkg / "package.json"
-    if pkg_json.is_file():
+    if readable_in_tree(pkg_json, root):
         try:
             data = json.loads(pkg_json.read_text(encoding="utf-8"))
             test = (data.get("scripts") or {}).get("test")
@@ -248,7 +273,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
                 }
             )
 
-    if (pkg / "go.mod").is_file():
+    if readable_in_tree(pkg / "go.mod", root):
         plans.append(
             {
                 "kind": "go-test",
@@ -260,7 +285,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
             }
         )
 
-    if (pkg / "Cargo.toml").is_file():
+    if readable_in_tree(pkg / "Cargo.toml", root):
         plans.append(
             {
                 "kind": "cargo-test",
@@ -272,7 +297,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
             }
         )
 
-    if python_project(pkg) and pytest_evidence(pkg):
+    if python_project(pkg, root) and pytest_evidence(pkg, root):
         plans.append(
             {
                 "kind": "pytest",
@@ -285,9 +310,9 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
         )
 
     makefile = pkg / "Makefile"
-    if makefile.is_file():
+    if readable_in_tree(makefile, root):
         for target in ("test", "lint", "check"):
-            body = read_make_recipe(makefile, target)
+            body = read_make_recipe(makefile, target, root)
             if body:
                 plans.append(
                     {
@@ -300,7 +325,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
                     }
                 )
 
-    if (pkg / "Package.swift").is_file():
+    if readable_in_tree(pkg / "Package.swift", root):
         plans.append(
             {
                 "kind": "swift-test",
@@ -312,7 +337,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
             }
         )
 
-    if (pkg / "pubspec.yaml").is_file():
+    if readable_in_tree(pkg / "pubspec.yaml", root):
         plans.append(
             {
                 "kind": "dart-test",
@@ -339,7 +364,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
                 }
             )
 
-        if (root / "Podfile").is_file():
+        if readable_in_tree(root / "Podfile", root):
             plans.append(
                 {
                     "kind": "pod-install",
@@ -353,7 +378,7 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
             )
 
         gradlew = root / "gradlew"
-        if gradlew.is_file():
+        if readable_in_tree(gradlew, root):
             plans.append(
                 {
                     "kind": "gradle-test",
@@ -369,8 +394,9 @@ def detect_at(pkg: Path, root: Path) -> list[dict]:
     return plans
 
 
-def detect(root: Path) -> tuple[list[dict], bool]:
-    roots, complete = package_roots(root)
+def detect(root: Path) -> tuple[list[dict], bool, object, int]:
+    cover = walk_tree(root)
+    roots, complete, skipped_outside = package_roots(root, cover.files)
     plans: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for pkg in roots:
@@ -380,7 +406,7 @@ def detect(root: Path) -> tuple[list[dict], bool]:
                 continue
             seen.add(key)
             plans.append(pl)
-    return plans, complete
+    return plans, complete, cover, skipped_outside
 
 
 def execute_plan(plan: dict, timeout: int) -> dict:
@@ -429,12 +455,14 @@ def main() -> int:
     args = p.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
-    plans, packages_complete = detect(root)
+    plans, packages_complete, cover, skipped_outside = detect(root)
     out: dict = {
         "root": str(root),
         "mode": "run" if args.run else "static",
         "sandbox": False,
         "packages_complete": packages_complete,
+        "skipped_outside_manifests": skipped_outside,
+        **coverage_json(cover),
         "runtime_note": (
             "class=executable is a command-shape allowlist, not an OS sandbox "
             "(no network/filesystem isolation). --run executes the project's test "

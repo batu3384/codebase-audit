@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import MAX_READ_BYTES, SOURCE_EXT, is_generated, redact, resolved_is_secret, walk_files
+from walk import MAX_READ_BYTES, SOURCE_EXT, coverage_json, is_generated, readable_in_tree, redact, walk_tree
 
 # Each: (regex, tag). Tag is the finding hint, not severity (agent decides entrypoint).
 PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -35,13 +35,14 @@ def main() -> int:
     args = ap.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
+    cover = walk_tree(root)
     hits: list[dict] = []
     by_tag: dict[str, int] = {}
     scanned = 0
     skipped_large = 0
 
-    for p in walk_files(root):
-        if resolved_is_secret(p, root) or is_generated(p.name):
+    for p in cover.files:
+        if not readable_in_tree(p, root) or is_generated(p.name):
             continue
         if p.name in SKIP_NAMES:
             continue
@@ -85,7 +86,8 @@ def main() -> int:
         "hits": hits,
         "truncated": sum(by_tag.values()) > MAX_HITS,
         "skipped_large": skipped_large,
-        "complete_scan": skipped_large == 0,
+        "complete_scan": skipped_large == 0 and cover.walk_complete,
+        **coverage_json(cover),
         "note": "regex stubs only; empty `pass` bodies not flagged (too noisy)",
     }
     print(json.dumps(out, indent=2))

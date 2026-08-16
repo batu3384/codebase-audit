@@ -36,6 +36,20 @@ def is_broad_workspace(ws: Path) -> bool:
     return False
 
 
+def home_ok(home: Path) -> str | None:
+    """Installer --home may be Path.home(). Refuse / and /Users-style tops."""
+    try:
+        h = home.expanduser().resolve()
+    except OSError as e:
+        return f"--home unreadable: {home} ({e})"
+    if is_fs_root(h):
+        return f"--home is filesystem root: {h}"
+    parent = h.parent
+    if is_fs_root(parent) and (h.name in POSIX_TOP or h.name.lower() in WIN_TOP):
+        return f"--home too broad: {h}"
+    return None
+
+
 def workspace_ok(ws: Path) -> str | None:
     try:
         ws = ws.expanduser().resolve()

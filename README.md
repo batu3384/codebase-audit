@@ -99,7 +99,7 @@ Chat: `Sonuç:` + path to `docs/codebase-audit/<date>.md` (+ `.json`). Canvas li
 codebase-audit/
 ├── SKILL.md
 ├── references/          # phase guides (loaded on demand)
-├── scripts/             # measurement + drift + install_links (Python 3)
+├── scripts/             # measurement + run.py + schema.py + install.py + install_links.py
 ├── install.sh
 ├── install.ps1
 └── README.md
@@ -111,6 +111,10 @@ codebase-audit/
 - `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted (JSON/YAML/quoted/bearer). `class: executable` is not an OS sandbox.
 - `xcodebuild` / Swift / iOS plans are detected but not executed (same on all OS).
 - Canvas files (Cursor): `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
+
+## v1.3.1
+
+Outside/broken symlink manifests are not read (`readable_in_tree`). Every child JSON carries `WalkCover` (`walk_complete`, skip counters). `complete_scan` includes line-count and large-TODO caps. Installer copies in-tree symlinks as links and refuses outside targets; host-link `rmtree` only if `SKILL.md` names this skill. `--home` refuses `/` and `/Users`-style tops (`Path.home()` allowed). Schema checks types, `root` match, and `sandbox: false`. Windows timeout uses `taskkill /T`.
 
 ## v1.3.0
 

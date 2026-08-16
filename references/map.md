@@ -22,7 +22,7 @@ Always two args: workspace then ROOT. Exit 2 → STOP. Do not replace with `find
 
 - `file_count == 0` → CLEAN, "no files", stop.
 - Docs-only (`file_count > 0`, empty `top_by_lines`) → continue.
-- Quote: `root`, `file_count`, `profile` (`primary`, `languages`, `test_kinds`), `todo_count`, `todo_by_file` (top), first 5 `top_by_lines` (include `package`), `secret_candidates` (path + `git` only), `workspace_markers`, `entrypoints`. If `docs_truncated` or `complete_todo_list: false`, say so. If `complete_scan: false`, quote `skipped_special` / `skipped_symlink_dirs` / `skipped_unreadable` — do not claim a full walk.
+- Quote: `root`, `file_count`, `profile` (`primary`, `languages`, `test_kinds`), `todo_count`, `todo_by_file` (top), first 5 `top_by_lines` (include `package`), `secret_candidates` (path + `git` only), `workspace_markers`, `entrypoints`. If `docs_truncated` or `complete_todo_list: false`, say so. If `complete_scan: false` or `walk_complete: false`, quote `skipped_special` / `skipped_symlink_dirs` / `skipped_unreadable` / `skipped_walk_errors` / `line_count_truncated` / `todo_skipped_large` — do not claim a full walk.
 - Later phases must follow `profile.primary`. Do not demand pytest on a Swift app or package.json on an Xcode tree.
 - God files later: group `top_by_lines` by `package`, not one flat list.
 

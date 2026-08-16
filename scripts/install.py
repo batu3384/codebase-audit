@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from paths import is_broad_workspace, is_fs_root
+from paths import home_ok, inside, is_broad_workspace, is_fs_root
 
 if sys.version_info < (3, 10):
     sys.stderr.write("codebase-audit needs Python 3.10+\n")
@@ -60,14 +61,37 @@ def require_markers(root: Path) -> None:
             raise SystemExit(f"missing marker {p}")
 
 
-def copy_tree(src: Path, dest: Path) -> None:
+def reject_outside_symlinks(src: Path) -> int:
+    n = 0
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+        base = Path(dirpath)
+        for name in list(dirnames) + list(filenames):
+            p = base / name
+            if not p.is_symlink():
+                continue
+            n += 1
+            try:
+                target = p.resolve()
+            except OSError as e:
+                sys.stderr.write(f"install refuse: broken symlink {p} ({e})\n")
+                raise SystemExit(2)
+            if not inside(target, src):
+                sys.stderr.write(f"install refuse: outside symlink {p}\n")
+                raise SystemExit(2)
+    return n
+
+
+def copy_tree(src: Path, dest: Path) -> int:
+    n = reject_outside_symlinks(src)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(
         src,
         dest,
+        symlinks=True,
         ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".pytest_cache"),
     )
+    return n
 
 
 def swap_in(staged: Path, dest: Path) -> None:
@@ -110,6 +134,10 @@ def main() -> int:
 
     repo = real(args.repo)
     require_markers(repo)
+    home_err = home_ok(args.home)
+    if home_err:
+        sys.stderr.write(f"install refuse: {home_err}\n")
+        return 2
     parent = real(args.agents_dir) if args.agents_dir else real(args.home / ".agents" / "skills")
     err = parent_ok(parent, repo)
     if err:
@@ -129,8 +157,9 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as td:
         staged = Path(td) / "codebase-audit"
-        copy_tree(repo, staged)
+        nlink = copy_tree(repo, staged)
         require_markers(staged)
+        print(f"symlinks_copied={nlink}")
         if not args.skip_self_check:
             run_py(staged / "scripts" / "self-check.py", [])
         keep = Path(td) / "keep"

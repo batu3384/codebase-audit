@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from paths import require_inside
-from walk import MAX_READ_BYTES, is_generated, resolved_is_secret, walk_files
+from walk import MAX_READ_BYTES, coverage_json, is_generated, readable_in_tree, walk_tree
 
 PATH_TOKEN = re.compile(
     r"(?:\./)?(?:scripts?|tools|bin|src|app|ci|fastlane)/[\w./+-]+\.[A-Za-z0-9]+"
@@ -45,7 +45,9 @@ def extract_paths(text: str) -> list[str]:
     return out
 
 
-def read_text(path: Path) -> str | None:
+def read_text(path: Path, root: Path) -> str | None:
+    if not readable_in_tree(path, root):
+        return None
     try:
         if path.stat().st_size > MAX_READ_BYTES:
             return None
@@ -57,13 +59,13 @@ def read_text(path: Path) -> str | None:
         return None
 
 
-def collect_haystack(root: Path) -> tuple[str, int, bool]:
+def collect_haystack(root: Path, files: list[Path]) -> tuple[str, int, bool]:
     """One pass over source. Cap 400 files."""
     chunks: list[str] = []
     n = 0
     truncated = False
-    for p in walk_files(root):
-        if resolved_is_secret(p, root) or is_generated(p.name):
+    for p in files:
+        if not readable_in_tree(p, root) or is_generated(p.name):
             continue
         if p.suffix.lower() not in SOURCE_SUF:
             continue
@@ -71,7 +73,7 @@ def collect_haystack(root: Path) -> tuple[str, int, bool]:
         if n > 400:
             truncated = True
             break
-        text = read_text(p)
+        text = read_text(p, root)
         if text:
             chunks.append(text)
     return "\n".join(chunks), min(n, 400), truncated
@@ -84,18 +86,20 @@ def main() -> int:
     args = ap.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
+    cover = walk_tree(root)
+    files = cover.files
     missing: list[dict] = []
     missing_n = 0
     plist_unused: list[dict] = []
     plist_missing: list[dict] = []
     scanned = 0
     binary_plist = False
-    haystack, haystack_files, haystack_truncated = collect_haystack(root)
+    haystack, haystack_files, haystack_truncated = collect_haystack(root, files)
 
     pkg = root / "package.json"
-    if pkg.is_file():
+    if readable_in_tree(pkg, root):
         scanned += 1
-        text = read_text(pkg) or ""
+        text = read_text(pkg, root) or ""
         try:
             scripts = (json.loads(text).get("scripts") or {}) if text else {}
             blob = " ".join(str(v) for v in scripts.values())
@@ -109,15 +113,15 @@ def main() -> int:
 
     plist_texts: list[tuple[str, str]] = []
 
-    for p in walk_files(root):
-        if resolved_is_secret(p, root) or is_generated(p.name):
+    for p in files:
+        if not readable_in_tree(p, root) or is_generated(p.name):
             continue
         rel = str(p.relative_to(root)).replace("\\", "/")
         name = p.name
         low = rel.lower()
         if "/.github/workflows/" in f"/{low}/" and name.endswith((".yml", ".yaml")):
             scanned += 1
-            text = read_text(p) or ""
+            text = read_text(p, root) or ""
             for spec in extract_paths(text):
                 if not (root / spec).exists():
                     missing_n += 1
@@ -125,7 +129,7 @@ def main() -> int:
                         missing.append({"from": rel, "path": spec})
         if name == "Info.plist" or name.endswith(".entitlements"):
             scanned += 1
-            text = read_text(p)
+            text = read_text(p, root)
             if text is None:
                 try:
                     head = p.read_bytes()[:8]
@@ -165,6 +169,7 @@ def main() -> int:
         "plist_missing_skipped_multi": len(plist_texts) > 1,
         "haystack_files": haystack_files,
         "haystack_truncated": haystack_truncated,
+        **coverage_json(cover),
         "note": "CI/package/plist paths and privacy keys vs symbols; no product-feature NLP",
     }
     print(json.dumps(out, indent=2))

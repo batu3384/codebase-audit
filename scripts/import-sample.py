@@ -11,11 +11,12 @@ from pathlib import Path
 from paths import require_inside
 from walk import (
     MAX_READ_BYTES,
+    coverage_json,
     is_entrypoint,
     is_generated,
     is_test_file,
-    resolved_is_secret,
-    walk_files,
+    readable_in_tree,
+    walk_tree,
 )
 
 # Relative / same-tree imports only. Bare `import UIKit` / `import os` skipped.
@@ -103,6 +104,8 @@ def file_edges(path: Path, root: Path) -> list[tuple[str, str, int, str]]:
     rel = str(path.relative_to(root))
     ext = path.suffix.lower()
     try:
+        if not readable_in_tree(path, root):
+            return []
         if path.stat().st_size > MAX_READ_BYTES:
             return []
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -199,13 +202,14 @@ def main() -> int:
     args = ap.parse_args()
     _ws, root = require_inside(args.workspace, args.root)
 
+    cover = walk_tree(root)
     parse_ext = JS_EXT | PY_EXT | GO_EXT
     edges: list[tuple[str, str, int, str]] = []
     srcs: list[str] = []
     parsed = 0
-    truncated = False
-    for p in walk_files(root):
-        if resolved_is_secret(p, root):
+    truncated = not cover.walk_complete
+    for p in cover.files:
+        if not readable_in_tree(p, root):
             continue
         if p.suffix.lower() not in parse_ext or is_generated(p.name):
             continue
@@ -282,6 +286,7 @@ def main() -> int:
         "note": "relative imports only among js/py/go; do not claim repo-wide acyclic",
         "truncated": truncated,
         "sample_truncated": len(edges) > SAMPLE_EDGES,
+        **coverage_json(cover),
     }
     print(json.dumps(out, indent=2))
     return 0

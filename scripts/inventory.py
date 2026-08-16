@@ -8,16 +8,18 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-from paths import require_inside
+from paths import inside, require_inside
 from walk import (
     LANG_FROM_EXT,
     SOURCE_EXT,
+    coverage_json,
     find_xcode_bundles,
     is_entrypoint,
     is_generated,
     is_test_file,
-    line_count,
+    line_count_ex,
     nearest_package,
+    readable_in_tree,
     resolved_is_secret,
     scan_todo,
     test_pair_stem,
@@ -70,9 +72,9 @@ def git_status(ws: Path, path: Path, *, has_git: bool) -> str:
 
 
 def manifest_entrypoints(root: Path) -> list[str]:
-    """package.json main/bin paths that exist on disk."""
+    """package.json main/bin paths that exist on disk, inside root."""
     pkg = root / "package.json"
-    if not pkg.is_file():
+    if not readable_in_tree(pkg, root):
         return []
     try:
         data = json.loads(pkg.read_text(encoding="utf-8"))
@@ -89,9 +91,19 @@ def manifest_entrypoints(root: Path) -> list[str]:
         specs.extend(v for v in b.values() if isinstance(v, str) and v.strip())
     out: list[str] = []
     seen: set[str] = set()
+    root_res = root.resolve()
     for spec in specs:
-        rel = spec.replace("\\", "/").lstrip("./")
-        if rel in seen or not (root / rel).is_file():
+        raw = spec.replace("\\", "/")
+        if raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+            continue
+        try:
+            resolved = (root / raw).resolve()
+        except OSError:
+            continue
+        if not inside(resolved, root_res) or not resolved.is_file():
+            continue
+        rel = str(resolved.relative_to(root_res)).replace("\\", "/")
+        if rel in seen:
             continue
         seen.add(rel)
         out.append(rel)
@@ -114,7 +126,7 @@ def detect_packages(root: Path) -> list[str]:
         "Podfile",
         "pyproject.toml",
     ):
-        if (root / name).is_file():
+        if readable_in_tree(root / name, root):
             markers.append(name)
     return markers
 
@@ -139,6 +151,8 @@ def main() -> int:
     lang_counts: Counter[str] = Counter()
     test_kinds: Counter[str] = Counter()
     test_files: list[str] = []
+    line_count_truncated = 0
+    todo_skipped_large = 0
 
     for p in files:
         rel = str(p.relative_to(root))
@@ -161,14 +175,19 @@ def main() -> int:
             if len(test_files) < 30:
                 test_files.append(rel)
         n = 0
-        if ext in SOURCE_EXT and not is_generated(name):
-            n = line_count(p)
+        want_src = ext in SOURCE_EXT and not is_generated(name)
+        want_todo = todo_scanable(p) and not is_generated(name)
+        if want_src or want_todo:
+            n, trunc = line_count_ex(p)
+            if trunc:
+                line_count_truncated += 1
+        if want_src:
             pkg = nearest_package(p, root)
             sources.append((n, rel, pkg))
-        if todo_scanable(p) and not is_generated(name):
-            if n == 0:
-                n = line_count(p)
-            c, samp = scan_todo(p, rel, n)
+        if want_todo:
+            c, samp, skipped_large = scan_todo(p, rel, n)
+            if skipped_large:
+                todo_skipped_large += 1
             todo_count += c
             if c:
                 todo_per_file[rel] += c
@@ -233,13 +252,13 @@ def main() -> int:
         "entrypoints": entrypoints[:40],
         "generated_excluded_from_top": True,
         "complete_todo_list": False,
-        "skipped_special": cover.skipped_special,
-        "skipped_symlink_dirs": cover.skipped_symlink_dirs,
-        "skipped_unreadable": cover.skipped_unreadable,
+        **coverage_json(cover),
+        "line_count_truncated": line_count_truncated,
+        "todo_skipped_large": todo_skipped_large,
         "complete_scan": (
-            cover.skipped_special == 0
-            and cover.skipped_unreadable == 0
-            and cover.skipped_symlink_dirs == 0
+            cover.walk_complete
+            and line_count_truncated == 0
+            and todo_skipped_large == 0
         ),
     }
     print(json.dumps(out, indent=2))
