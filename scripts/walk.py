@@ -182,6 +182,7 @@ PACKAGE_MARKERS = (
 
 ENTRY_NAMES = {
     "main.py",
+    "__main__.py",
     "app.py",
     "wsgi.py",
     "asgi.py",
@@ -217,8 +218,12 @@ ENTRY_RELS = {
 MAX_READ_BYTES = 2_000_000
 
 
-def redact(s: str) -> str:
-    return SECRETISH.sub(lambda m: m.group(1) + "=***", s)[:120]
+def redact(s: str, *, limit: int = 120) -> str:
+    return SECRETISH.sub(lambda m: m.group(1) + "=***", s)[:limit]
+
+
+def redact_tail(s: str, n: int = 2000) -> str:
+    return SECRETISH.sub(lambda m: m.group(1) + "=***", s or "")[-n:]
 
 
 def is_test_file(rel: str, name: str) -> str | None:
@@ -276,7 +281,7 @@ def find_xcode_bundles(root: Path) -> list[str]:
     for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
         base = Path(dirpath)
         keep: list[str] = []
-        for d in dirnames:
+        for d in sorted(dirnames):
             child = base / d
             if should_prune_dir(child):
                 continue
@@ -344,12 +349,13 @@ def should_prune_dir(path: Path) -> bool:
 
 
 def walk_files(root: Path) -> list[Path]:
+    """Pruned file list. Outside/broken symlinks are included as paths; not followed."""
     root = root.resolve()
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         base = Path(dirpath)
         keep: list[str] = []
-        for d in dirnames:
+        for d in sorted(dirnames):
             child = base / d
             if should_prune_dir(child):
                 continue
@@ -357,19 +363,23 @@ def walk_files(root: Path) -> list[Path]:
                 try:
                     real = child.resolve()
                 except OSError:
+                    out.append(child)
                     continue
                 if not inside(real, root):
+                    out.append(child)
                     continue
             keep.append(d)
         dirnames[:] = keep
-        for fn in filenames:
+        for fn in sorted(filenames):
             p = base / fn
             if p.is_symlink():
                 try:
                     real = p.resolve()
                 except OSError:
+                    out.append(p)
                     continue
                 if not inside(real, root):
+                    out.append(p)
                     continue
             out.append(p)
     return out

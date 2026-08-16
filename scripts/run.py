@@ -60,7 +60,8 @@ def main() -> int:
         extra = ["--run"] if name == "runtime-check.py" and args.run else []
         out[name.replace(".py", "")] = run_one(name, pair + extra)
         blob = out[name.replace(".py", "")]
-        if isinstance(blob, dict) and blob.get("exit") == 2:
+        if isinstance(blob, dict) and (blob.get("error") or blob.get("exit") not in (None, 0)):
+            out["incomplete"] = True
             print(json.dumps(out, indent=2))
             return 2
     print(json.dumps(out, indent=2))

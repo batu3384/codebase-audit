@@ -69,6 +69,15 @@ def load_sidecar(path: Path) -> dict:
     date = str(data.get("date") or "")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
         raise ValueError("date must be YYYY-MM-DD")
+    key = stem_key(path)
+    if key is None:
+        raise ValueError("sidecar name must be YYYY-MM-DD.json or YYYY-MM-DD-HHMM.json")
+    if date != key[0]:
+        raise ValueError("date must match filename YYYY-MM-DD")
+    root = str(data.get("root") or "").strip()
+    if not root:
+        raise ValueError("root required")
+    data["root"] = root
     findings = data.get("findings")
     if not isinstance(findings, list):
         raise ValueError("findings must be a list")
@@ -117,16 +126,29 @@ def older_sidecars(folder: Path, current: Path) -> list[Path]:
     return [p for _, p in rows]
 
 
-def pick_previous(folder: Path, current: Path) -> tuple[Path | None, dict | None, list[str]]:
+def canon_root(raw: str) -> str:
+    return str(Path(raw).expanduser().resolve())
+
+
+def pick_previous(
+    folder: Path, current: Path, cur_root: str
+) -> tuple[Path | None, dict | None, list[str], list[str]]:
     skipped: list[str] = []
+    skipped_root: list[str] = []
+    want = canon_root(cur_root)
     for p in older_sidecars(folder, current):
         try:
-            return p, load_sidecar(p), skipped
+            prev = load_sidecar(p)
         except ValueError:
             skipped.append(p.name)
             if len(skipped) >= 8:
                 break
-    return None, None, skipped
+            continue
+        if canon_root(str(prev.get("root") or "")) != want:
+            skipped_root.append(p.name)
+            continue
+        return p, prev, skipped, skipped_root
+    return None, None, skipped, skipped_root
 
 
 def main() -> int:
@@ -147,7 +169,9 @@ def main() -> int:
         return 2
     try:
         cur = load_sidecar(sidecar)
-        prev_path, prev, skipped = pick_previous(sidecar.parent, sidecar)
+        prev_path, prev, skipped, skipped_root = pick_previous(
+            sidecar.parent, sidecar, cur["root"]
+        )
     except ValueError as e:
         print(f"STOP sidecar: {e}", file=sys.stderr)
         return 2
@@ -168,6 +192,7 @@ def main() -> int:
         "current": sidecar.name,
         "previous": prev_path.name if prev_path else None,
         "skipped_corrupt": skipped[:8],
+        "skipped_root": skipped_root[:8],
         "added": [public_item(cur_by_fp[fp]) for fp in added_fps[:CAP]],
         "removed": [public_item(prev_by_fp[fp]) for fp in removed_fps[:CAP]],
         "still": [public_item(cur_by_fp[fp]) for fp in still_fps[:CAP]],

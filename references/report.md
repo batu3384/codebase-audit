@@ -31,7 +31,7 @@ Türkçe. Letters: **ı, ğ, ü, ş, ö, ç, İ**. Path, `CA-001`, severity, ver
 # Kod tabanı denetimi — <workspace basename>
 
 - Tarih: YYYY-MM-DD
-- Kapsam: <ROOT>
+- Kapsam: <ROOT> (file path given → parent directory)
 - Runtime: static | --runtime
 - Verdict: BLOCK | CONCERNS | CLEAN
 - Envanter: file_count, todo_count (script stdout)
@@ -82,13 +82,13 @@ Write **before** `drift.py`. No Kanıt, no secret values, no finding bodies. `id
 }
 ```
 
-`path` may include `:line`; fingerprint strips `:\d+$`. Duplicate fingerprints in one file collapse to one.
+`path` may include `:line`; fingerprint strips `:\d+$`. Duplicate fingerprints in one file collapse to one. `date` must match the filename `YYYY-MM-DD`. `root` is required; `drift.py` only compares sidecars with the same canonical root (`skipped_root`).
 
 ```bash
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/drift.py" "$WORKSPACE" "$WORKSPACE/docs/codebase-audit/YYYY-MM-DD.json"
 ```
 
-Exit 2 (missing/bad **current** sidecar, sandbox, undated filename) → incomplete, not CLEAN. Corrupt **previous** files are skipped (`skipped_corrupt`); do not abort.
+Exit 2 (missing/bad **current** sidecar, sandbox, undated filename, date/filename mismatch, missing `root`) → incomplete, not CLEAN. Corrupt **previous** files are skipped (`skipped_corrupt`); different `root` is skipped (`skipped_root`); do not abort.
 
 ## Drift (from drift.py stdout)
 
@@ -143,7 +143,7 @@ Short. No finding dump. Lead with the project path (writing-plans style).
 ```
 Verdict: CONCERNS
 Rapor kaydedildi: docs/codebase-audit/YYYY-MM-DD.md (+ .json)
-Canvas: [kod tabanı denetimi](<absolute .canvas.tsx>)
+Canvas: Open canvas — absolute path to the `.canvas.tsx` file
 Aynı sohbet: düzelt CA-001
 ```
 

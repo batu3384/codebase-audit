@@ -52,7 +52,10 @@ def main() -> int:
             continue
         rel = str(p.relative_to(root))
         for m in MD_LINK.finditer(text):
-            href = clean_href(m.group(1))
+            raw = m.group(1).strip()
+            if raw.startswith("<") and "://" not in raw:
+                continue
+            href = clean_href(raw)
             if not href or SKIP_LINK.search(href):
                 continue
             if href.startswith("//") or href.startswith("http"):

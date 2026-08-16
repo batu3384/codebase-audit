@@ -93,9 +93,13 @@ codebase-audit/
 ## Windows notes
 
 - Static audit: full support.
-- `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`).
+- `--runtime`: uses `sys.executable` for pytest (no hardcoded `python3`). Child process gets an env allowlist (no inherited API keys); stdout/stderr are redacted.
 - `xcodebuild` / Swift / iOS plans are detected but not executed (same on all OS).
 - Canvas files: `%USERPROFILE%\.cursor\projects\<workspace-slug>\canvases\`
+
+## v1.1.0
+
+Measurement honesty: list/parse caps now set `*_complete: false` instead of silent truncation. Outside-tree symlinks are secret **candidates** (body unread). `run.py` fails closed on unexpected script errors. Drift matches `root` + filename date. `--runtime` env allowlist + output redaction.
 
 ## Update
 

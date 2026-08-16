@@ -21,6 +21,7 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/promises.py" "$WO
 - `missing_paths` (CI / package.json script path yok) → Docs or Functional correctness, Major if it is the advertised start/test command. Dedup with `docs-check.py` `promised_missing` (same path → one CA-NNN).
 - `plist_unused` (privacy key var, sembol yok) → Docs, Minor. Dead permission copy.
 - `plist_missing` (sembol var, key yok) → Security architecture, Major. Only when **one** XML `Info.plist`. `plist_missing_skipped_multi` or `binary_plist` → skip reverse check, Info.
+- `haystack_truncated` or `missing_complete: false` → do not claim CI/plist cross-check is exhaustive; not CLEAN on that evidence.
 - Do not invent features from plist keys that are unused. Unused key = copy rot, not “add camera”.
 
 ## God files

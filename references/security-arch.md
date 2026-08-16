@@ -14,6 +14,7 @@ Use `inventory.py` `secret_candidates` (`path` + `git` only). Do not Read / `cat
 |-------|----------|
 | `tracked` | Critical |
 | `untracked` | Major (present, not ignored — may be committed next) |
+| `outside` | Major (symlink points outside the tree; do not follow or Read) |
 | `ignored` | Info (local `.env` is normal) |
 | `no-git` | Info |
 

@@ -57,10 +57,11 @@ def read_text(path: Path) -> str | None:
         return None
 
 
-def collect_haystack(root: Path) -> str:
+def collect_haystack(root: Path) -> tuple[str, int, bool]:
     """One pass over source. Cap 400 files."""
     chunks: list[str] = []
     n = 0
+    truncated = False
     for p in walk_files(root):
         if resolved_is_secret(p, root) or is_generated(p.name):
             continue
@@ -68,11 +69,12 @@ def collect_haystack(root: Path) -> str:
             continue
         n += 1
         if n > 400:
+            truncated = True
             break
         text = read_text(p)
         if text:
             chunks.append(text)
-    return "\n".join(chunks)
+    return "\n".join(chunks), min(n, 400), truncated
 
 
 def main() -> int:
@@ -83,11 +85,12 @@ def main() -> int:
     _ws, root = require_inside(args.workspace, args.root)
 
     missing: list[dict] = []
+    missing_n = 0
     plist_unused: list[dict] = []
     plist_missing: list[dict] = []
     scanned = 0
     binary_plist = False
-    haystack = collect_haystack(root)
+    haystack, haystack_files, haystack_truncated = collect_haystack(root)
 
     pkg = root / "package.json"
     if pkg.is_file():
@@ -100,7 +103,9 @@ def main() -> int:
             blob = text
         for spec in extract_paths(blob):
             if not (root / spec).exists():
-                missing.append({"from": "package.json", "path": spec})
+                missing_n += 1
+                if len(missing) < 40:
+                    missing.append({"from": "package.json", "path": spec})
 
     plist_texts: list[tuple[str, str]] = []
 
@@ -115,9 +120,9 @@ def main() -> int:
             text = read_text(p) or ""
             for spec in extract_paths(text):
                 if not (root / spec).exists():
-                    missing.append({"from": rel, "path": spec})
-                    if len(missing) >= 40:
-                        break
+                    missing_n += 1
+                    if len(missing) < 40:
+                        missing.append({"from": rel, "path": spec})
         if name == "Info.plist" or name.endswith(".entitlements"):
             scanned += 1
             text = read_text(p)
@@ -137,8 +142,6 @@ def main() -> int:
                     continue
                 if not any(s in haystack for s in needles):
                     plist_unused.append({"from": rel, "key": key})
-        if len(missing) >= 40:
-            break
 
     # Reverse privacy string: only when a single XML Info.plist exists.
     # Multiple targets share one haystack; merged blob lies. Skip rather than guess.
@@ -154,10 +157,14 @@ def main() -> int:
         "root": str(root),
         "files_scanned": scanned,
         "missing_paths": missing[:40],
+        "missing_count": missing_n,
+        "missing_complete": missing_n <= 40,
         "plist_unused": plist_unused[:20],
         "plist_missing": plist_missing[:20],
         "binary_plist": binary_plist,
         "plist_missing_skipped_multi": len(plist_texts) > 1,
+        "haystack_files": haystack_files,
+        "haystack_truncated": haystack_truncated,
         "note": "CI/package/plist paths and privacy keys vs symbols; no product-feature NLP",
     }
     print(json.dumps(out, indent=2))

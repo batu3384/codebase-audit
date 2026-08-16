@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from paths import require_inside
-from walk import find_xcode_bundles
+from walk import find_xcode_bundles, redact_tail
 
 UNSAFE_SHELL = re.compile(
     r"[|&;`$(){}><]|"
@@ -103,13 +103,39 @@ def read_make_recipe(makefile: Path, target: str) -> str | None:
     return " && ".join(recipe) if recipe else None
 
 
+CHILD_ENV_KEEP = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMDATA",
+)
+
+
+def child_env() -> dict[str, str]:
+    env = {k: os.environ[k] for k in CHILD_ENV_KEEP if k in os.environ}
+    env["CI"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def pytest_cmd() -> list[str]:
     return [sys.executable, "-m", "pytest", "-q"]
 
 
 def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
-    env = os.environ.copy()
-    env["CI"] = "1"
     try:
         r = subprocess.run(
             cmd,
@@ -117,13 +143,13 @@ def run_cmd(cmd: list[str], cwd: Path, timeout: int) -> dict:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=env,
+            env=child_env(),
         )
         return {
             "cmd": cmd,
             "exit": r.returncode,
-            "stdout_tail": (r.stdout or "")[-2000:],
-            "stderr_tail": (r.stderr or "")[-2000:],
+            "stdout_tail": redact_tail(r.stdout or "", 2000),
+            "stderr_tail": redact_tail(r.stderr or "", 2000),
         }
     except subprocess.TimeoutExpired:
         return {"cmd": cmd, "exit": 124, "error": "timeout"}
@@ -282,7 +308,7 @@ def main() -> int:
         "mode": "run" if args.run else "static",
         "runtime_note": (
             "--run executes the project's test runner (jest.config, conftest.py, "
-            "TestMain). Opt-in only."
+            "TestMain). Child env is an allowlist (no inherited API keys). Opt-in only."
         ),
         "plans": plans,
     }

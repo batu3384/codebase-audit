@@ -10,7 +10,7 @@ Workspace = opened project root. `AUDIT_PATH` = user path or omit.
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/resolve-root.py" "$WORKSPACE" ${AUDIT_PATH:+"$AUDIT_PATH"}
 ```
 
-Exit 2 → STOP. Exit 0 stdout = `ROOT`.
+Exit 2 → STOP. Exit 0 stdout = `ROOT`. If `AUDIT_PATH` is a **file**, ROOT is its parent directory — say so in the report `Kapsam` line.
 
 ```bash
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/inventory.py" "$WORKSPACE" "$ROOT"
@@ -24,7 +24,7 @@ Always two args: workspace then ROOT. Exit 2 → STOP. Do not replace with `find
 - Later phases must follow `profile.primary`. Do not demand pytest on a Swift app or package.json on an Xcode tree.
 - God files later: group `top_by_lines` by `package`, not one flat list.
 
-`secret_candidates`: existence + git field only. Do not Read those files. Symlink to a secret is a candidate; do not follow.
+`secret_candidates`: existence + git field only. Do not Read those files. Symlink to a secret **or a symlink pointing outside the tree** is a candidate (`git: outside`); do not follow.
 
 ## After inventory
 

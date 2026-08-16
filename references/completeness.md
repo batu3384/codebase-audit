@@ -14,6 +14,7 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/stub-scan.py" "$W
 - Entrypoint + `NotImplementedError` / `todo!` / `fatalError("TODO` / `unimplemented!` → Functional correctness, Major.
 - Same tag off the main path → one finding per tag with count, not one finding per line.
 - Do not dump every `todo_samples` row as its own `CA-NNN`. Use `todo_by_file` for clusters.
+- `complete_scan: false` / `skipped_large` > 0 → do not claim stub completeness (files over 2 MB were not read).
 
 ## Broken (static)
 
@@ -44,7 +45,7 @@ Only if the user passed `--runtime` or explicitly asked to run tests:
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/runtime-check.py" "$WORKSPACE" "$ROOT" --run --timeout 120
 ```
 
-Runs **every** `class: safe` plan (not only the first). Residual: the test runner loads project config/tests (jest.config, conftest, TestMain, Package.swift tests). Never `make` / `npx` / `xcodebuild` / `gradlew` / unsafe bodies. Nonzero exit → Major (Critical if sole advertised test). Exit 127 → Info, tool yok. Failed run → not CLEAN.
+Runs **every** `class: safe` plan (not only the first). Residual: the test runner loads project config/tests (jest.config, conftest, TestMain, Package.swift tests). Child env is an allowlist (no inherited API keys); stdout/stderr are redacted. Never `make` / `npx` / `xcodebuild` / `gradlew` / unsafe bodies. Nonzero exit → Major (Critical if sole advertised test). Exit 127 → Info, tool yok. Failed run → not CLEAN.
 
 Default audit: static JSON is enough. Do not hand-run tests.
 

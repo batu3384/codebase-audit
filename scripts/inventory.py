@@ -40,12 +40,12 @@ def git_probe(ws: Path) -> bool:
 
 
 def git_status(ws: Path, path: Path, *, has_git: bool) -> str:
-    if not has_git:
-        return "no-git"
     try:
         rel = str(path.resolve().relative_to(ws.resolve()))
     except ValueError:
         return "outside"
+    if not has_git:
+        return "no-git"
     try:
         ign = subprocess.run(
             ["git", "-C", str(ws), "check-ignore", "-q", "--", rel],
@@ -67,6 +67,35 @@ def git_status(ws: Path, path: Path, *, has_git: bool) -> str:
     if tracked.returncode == 0:
         return "tracked"
     return "untracked"
+
+
+def manifest_entrypoints(root: Path) -> list[str]:
+    """package.json main/bin paths that exist on disk."""
+    pkg = root / "package.json"
+    if not pkg.is_file():
+        return []
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    specs: list[str] = []
+    main = data.get("main")
+    if isinstance(main, str) and main.strip():
+        specs.append(main)
+    b = data.get("bin")
+    if isinstance(b, str) and b.strip():
+        specs.append(b)
+    elif isinstance(b, dict):
+        specs.extend(v for v in b.values() if isinstance(v, str) and v.strip())
+    out: list[str] = []
+    seen: set[str] = set()
+    for spec in specs:
+        rel = spec.replace("\\", "/").lstrip("./")
+        if rel in seen or not (root / rel).is_file():
+            continue
+        seen.add(rel)
+        out.append(rel)
+    return out
 
 
 def detect_packages(root: Path) -> list[str]:
@@ -145,6 +174,12 @@ def main() -> int:
             for s in samp:
                 if len(todo_samples) < 40:
                     todo_samples.append(s)
+
+    seen_ep = set(entrypoints)
+    for spec in manifest_entrypoints(root):
+        if spec not in seen_ep:
+            entrypoints.append(spec)
+            seen_ep.add(spec)
 
     sources.sort(reverse=True)
     top = [{"path": rel, "lines": n, "package": pkg} for n, rel, pkg in sources[:30]]

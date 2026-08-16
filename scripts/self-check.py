@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,19 @@ def main() -> int:
                 errors.append("symlink leak.py not classified as secret")
             if any("leak.py" in x.get("path", "") for x in data.get("top_by_lines", [])):
                 errors.append("symlink leak.py treated as source")
+            ext_secret = Path(td) / "outside-secret.env"
+            ext_secret.write_text("SECRET=outside-body-must-not-leak\n")
+            (ws / "ext-link.cfg").symlink_to(ext_secret)
+            inv_out = run([PY, str(SCRIPTS / "inventory.py"), str(ws), str(ws)])
+            data_out = json.loads(inv_out.stdout)
+            if "outside-body-must-not-leak" in inv_out.stdout:
+                errors.append("inventory leaked outside symlink body")
+            ext_hit = next(
+                (s for s in data_out.get("secret_candidates", []) if "ext-link.cfg" in s.get("path", "")),
+                None,
+            )
+            if not ext_hit or ext_hit.get("git") != "outside":
+                errors.append(f"outside symlink should be git=outside, got {ext_hit}")
 
         bad = run([PY, str(SCRIPTS / "inventory.py"), str(ws), str(outside)])
         if bad.returncode != 2:
@@ -461,6 +475,7 @@ def main() -> int:
             findings: list[dict],
             date: str = "2026-08-14",
             verdict: str = "CONCERNS",
+            root: str | None = None,
         ) -> Path:
             p = folder / name
             p.write_text(
@@ -469,6 +484,7 @@ def main() -> int:
                         "schema": 1,
                         "skill": "codebase-audit",
                         "date": date,
+                        "root": root or str(ws),
                         "verdict": verdict,
                         "runtime": "static",
                         "findings": findings,
@@ -600,6 +616,7 @@ def main() -> int:
             "schema": 1,
             "skill": "codebase-audit",
             "date": "2026-08-11",
+            "root": str(ws),
             "verdict": "CONCERNS",
             "runtime": "static",
             "findings": [
@@ -629,6 +646,148 @@ def main() -> int:
                 )
             if data.get("counts", {}).get("still") != 1:
                 errors.append(f"walk-back still should be 1, got {data.get('counts')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "orphancap"
+        proj.mkdir()
+        for i in range(41):
+            (proj / f"o{i:02d}.py").write_text("x=1\n")
+        r = run([PY, str(SCRIPTS / "import-sample.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("orphans_complete") is not False:
+            errors.append(
+                f"41 orphans should set orphans_complete false, got {data.get('orphans_complete')}"
+            )
+        if data.get("orphans_count") != 41:
+            errors.append(f"orphans_count should be 41, got {data.get('orphans_count')}")
+        if len(data.get("orphans") or []) != 40:
+            errors.append(f"orphans list should cap at 40, got {len(data.get('orphans') or [])}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "bigstub"
+        proj.mkdir()
+        (proj / "tiny.py").write_text("x=1\n")
+        (proj / "huge.py").write_bytes(b"# " + b"a" * 2_000_001 + b"\n")
+        r = run([PY, str(SCRIPTS / "stub-scan.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        if data.get("complete_scan") is not False:
+            errors.append(f"large file should set complete_scan false, got {data}")
+        if data.get("skipped_large", 0) < 1:
+            errors.append(f"skipped_large should be >=1, got {data.get('skipped_large')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "stubskip"
+        proj.mkdir()
+        (proj / "stub-scan.py").write_text("raise NotImplementedError()\n")
+        (proj / "real.py").write_text("raise NotImplementedError()\n")
+        r = run([PY, str(SCRIPTS / "stub-scan.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        paths = [h.get("path", "") for h in data.get("hits") or []]
+        if any(p.endswith("stub-scan.py") for p in paths):
+            errors.append("stub-scan should skip detector filename")
+        if not any(p.endswith("real.py") for p in paths):
+            errors.append(f"stub-scan missed real.py, hits={paths}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "entry"
+        proj.mkdir()
+        (proj / "__main__.py").write_text("print(1)\n")
+        (proj / "bin.js").write_text("console.log(1)\n")
+        (proj / "package.json").write_text('{"bin":"./bin.js"}')
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        eps = data.get("entrypoints") or []
+        if "__main__.py" not in eps:
+            errors.append(f"__main__.py should be entrypoint, got {eps}")
+        if "bin.js" not in eps:
+            errors.append(f"package.json bin.js should be entrypoint, got {eps}")
+
+    with tempfile.TemporaryDirectory() as td:
+        ws = Path(td) / "driftmeta"
+        folder = ws / "docs" / "codebase-audit"
+        folder.mkdir(parents=True)
+        bad_date = folder / "2026-08-16.json"
+        bad_date.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "skill": "codebase-audit",
+                    "date": "2025-01-01",
+                    "root": str(ws),
+                    "verdict": "CLEAN",
+                    "findings": [
+                        {
+                            "id": "CA-001",
+                            "severity": "Info",
+                            "category": "Docs",
+                            "path": "a.py",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        r = run([PY, str(SCRIPTS / "drift.py"), str(ws), str(bad_date)])
+        if r.returncode != 2:
+            errors.append(f"date/filename mismatch should exit 2, got {r.returncode}")
+
+        finding = {
+            "id": "CA-001",
+            "severity": "Major",
+            "category": "Maintainability",
+            "path": "a.py",
+        }
+        payload = {
+            "schema": 1,
+            "skill": "codebase-audit",
+            "date": "2026-08-13",
+            "root": str(Path(td) / "other-tree"),
+            "verdict": "CONCERNS",
+            "runtime": "static",
+            "findings": [finding],
+        }
+        (folder / "2026-08-13.json").write_text(json.dumps(payload), encoding="utf-8")
+        payload["date"] = "2026-08-12"
+        payload["root"] = str(ws)
+        (folder / "2026-08-12.json").write_text(json.dumps(payload), encoding="utf-8")
+        payload["date"] = "2026-08-16"
+        cur = folder / "2026-08-16.json"
+        cur.write_text(json.dumps(payload), encoding="utf-8")
+        r = run([PY, str(SCRIPTS / "drift.py"), str(ws), str(cur)])
+        if r.returncode != 0:
+            errors.append(f"drift skipped_root failed: {r.stderr}")
+        else:
+            data = json.loads(r.stdout)
+            if data.get("previous") != "2026-08-12.json":
+                errors.append(f"should skip other root, previous={data.get('previous')}")
+            if "2026-08-13.json" not in (data.get("skipped_root") or []):
+                errors.append(f"skipped_root missing 2026-08-13, got {data.get('skipped_root')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "envleak"
+        proj.mkdir()
+        (proj / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+        tests = proj / "tests"
+        tests.mkdir()
+        (tests / "test_a.py").write_text(
+            "import os\n"
+            "def test_ok():\n"
+            "    print('PROBE=' + os.environ.get('CODEX_SECRET_PROBE', 'none'))\n"
+            "    assert True\n"
+        )
+        env = os.environ.copy()
+        env["CODEX_SECRET_PROBE"] = "should-not-appear-in-json"
+        r = subprocess.run(
+            [PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj), "--run"],
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPTS),
+            env=env,
+        )
+        if r.returncode != 0:
+            errors.append(f"envleak runtime-check failed: {r.stderr}")
+        elif "should-not-appear-in-json" in r.stdout:
+            errors.append("runtime --run leaked parent env secret")
 
     if errors:
         print("; ".join(errors))

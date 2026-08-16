@@ -9,7 +9,7 @@ description: >
   not for OWASP/SAST vulnerability hunting, not for applying fixes.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   homepage: https://github.com/batu3384/codebase-audit
   keywords: architecture audit codebase maintainability structure
 ---
@@ -33,7 +33,7 @@ Whole-tree (or path) architecture and quality audit. Evidence-backed findings. N
 /codebase-audit --runtime
 ```
 
-Default is **static**. `--runtime` runs `runtime-check.py --run`: **all** `class: safe` plans (npm/go/cargo/pytest/swift/dart). Never `make` / `npx` / `curl` / `xcodebuild` / `gradlew`. Residual: jest.config, conftest.py, TestMain, and Package.swift tests are the project's code and will execute. Opt-in only.
+Default is **static**. `--runtime` runs `runtime-check.py --run`: **all** `class: safe` plans (npm/go/cargo/pytest/swift/dart). Never `make` / `npx` / `curl` / `xcodebuild` / `gradlew`. Child env is an allowlist; stdout/stderr redacted. Residual: jest.config, conftest.py, TestMain, and Package.swift tests are the project's code and will execute. Opt-in only.
 
 ## When to Use
 
@@ -60,8 +60,8 @@ Default is **static**. `--runtime` runs `runtime-check.py --run`: **all** `class
   5. `scripts/import-sample.py` (phase 2)
   6. `scripts/stub-scan.py` (phase 4)
   7. `scripts/runtime-check.py` (no `--run` unless user `--runtime`)
-- Exit 2 from any script → STOP. **No verdict** unless the report quotes those stdout. Missing → incomplete, not CLEAN.
-- Secret severity from inventory `git` field: `tracked` Critical; `untracked` Major; `ignored` / `no-git` Info. Local ignored `.env` is not BLOCK.
+- Exit 2 from any script, or `run.py` `incomplete` → STOP. **No verdict** unless the report quotes those stdout. Missing → incomplete, not CLEAN. `*_complete: false` / `haystack_truncated` / `complete_scan: false` → do not claim absence of that finding type; not CLEAN on that evidence.
+- Secret severity from inventory `git` field: `tracked` Critical; `untracked` Major; `outside` Major (symlink out of tree, do not follow); `ignored` / `no-git` Info. Local ignored `.env` is not BLOCK.
 - Shell: `rtk ` or `rtk proxy `. Load `references/<phase>.md` only when that phase starts.
 - **Critical and Major are never truncated.** 40 cap = Minor/Trivial/Info only.
 
@@ -82,7 +82,7 @@ Default is **static**. `--runtime` runs `runtime-check.py --run`: **all** `class
 
 BLOCK ≥1 Critical. CONCERNS no Critical, ≥1 Major. CLEAN only Minor/Trivial/Info.
 
-CLEAN ≠ works. Unsafe test script, failed `--runtime`, or missing script stdout → not CLEAN.
+CLEAN ≠ works. Unsafe test script, failed `--runtime`, missing script stdout, or silent truncation flags → not CLEAN.
 
 ## Output
 
@@ -93,6 +93,7 @@ Phase 5: read `references/report.md`. **Must** write `$WORKSPACE/docs/codebase-a
 - Skipping scripts / raw `rg` for architecture
 - `inventory.py ROOT` without workspace (must be `WORKSPACE ROOT`)
 - CLEAN on ignored `.env` as if it were a committed secret
+- CLEAN when `orphans_complete` / `unresolved_complete` / `complete_scan` is false
 - `--run` without user `--runtime`
 - Chat-only report (no `docs/codebase-audit/` md+json, no `.canvas.tsx`)
 - Drift by CA-NNN (IDs reset each run; use `drift.py` fingerprints)

@@ -159,7 +159,7 @@ def cycles_in(edges: list[tuple[str, str, int, str]]) -> list[list[str]]:
             return
         visiting.add(n)
         stack.append(n)
-        for nxt in graph.get(n, ()):
+        for nxt in sorted(graph.get(n, ())):
             if nxt in visiting:
                 i = stack.index(nxt)
                 found.append(stack[i:] + [nxt])
@@ -169,7 +169,7 @@ def cycles_in(edges: list[tuple[str, str, int, str]]) -> list[list[str]]:
         visiting.discard(n)
         seen.add(n)
 
-    for node in list(graph):
+    for node in sorted(graph):
         dfs(node)
     # unique by frozenset of nodes
     uniq = []
@@ -242,15 +242,12 @@ def main() -> int:
             if rel in dests:
                 continue
             orphans.append(rel)
-            if len(orphans) >= 40:
-                break
+        orphans.sort()
         for a, b, ln, k in edges:
             if k != "ok":
                 continue
             if folder_kind(a) == "ui" and folder_kind(b) == "data":
                 layer_hints.append({"from": a, "to": b, "line": ln})
-                if len(layer_hints) >= 20:
-                    break
         in_count: dict[str, int] = defaultdict(int)
         for _a, b, _i, k in edges:
             if k == "ok":
@@ -260,22 +257,31 @@ def main() -> int:
             for path, n in sorted(in_count.items(), key=lambda x: -x[1])[:5]
             if n >= 3
         ]
+    orphan_n = len(orphans)
+    unresolved_n = len(missing)
+    layer_n = len(layer_hints)
     out = {
         "root": str(root),
         "n": len(edges),
         "files": len(files),
         "sample": sample,
         "unresolved": missing[:40],
+        "unresolved_count": unresolved_n,
+        "unresolved_complete": not truncated and unresolved_n <= 40,
         "cycles": cyc,
-        "orphans": orphans,
-        "orphans_complete": not truncated,
+        "cycles_complete": len(cyc) < 8,
+        "orphans": orphans[:40],
+        "orphans_count": orphan_n,
+        "orphans_complete": not truncated and orphan_n <= 40,
         "orphan_scope": "js/py/go relative only; Swift modules excluded",
-        "layer_hints": layer_hints,
+        "layer_hints": layer_hints[:20],
+        "layer_hints_count": layer_n,
         "hubs": hubs,
         "engine": "walk-parse",
         "complete_graph": False,
         "note": "relative imports only among js/py/go; do not claim repo-wide acyclic",
         "truncated": truncated,
+        "sample_truncated": len(edges) > SAMPLE_EDGES,
     }
     print(json.dumps(out, indent=2))
     return 0

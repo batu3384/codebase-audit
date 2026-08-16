@@ -25,6 +25,7 @@ PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 MAX_HITS = 80
+SKIP_NAMES = {"stub-scan.py", "self-check.py"}
 
 
 def main() -> int:
@@ -37,15 +38,19 @@ def main() -> int:
     hits: list[dict] = []
     by_tag: dict[str, int] = {}
     scanned = 0
+    skipped_large = 0
 
     for p in walk_files(root):
         if resolved_is_secret(p, root) or is_generated(p.name):
+            continue
+        if p.name in SKIP_NAMES:
             continue
         if p.suffix.lower() not in SOURCE_EXT:
             continue
         scanned += 1
         try:
             if p.stat().st_size > MAX_READ_BYTES:
+                skipped_large += 1
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -77,7 +82,8 @@ def main() -> int:
         "by_tag": by_tag,
         "hits": hits,
         "truncated": sum(by_tag.values()) > MAX_HITS,
-        "complete_scan": True,
+        "skipped_large": skipped_large,
+        "complete_scan": skipped_large == 0,
         "note": "regex stubs only; empty `pass` bodies not flagged (too noisy)",
     }
     print(json.dumps(out, indent=2))
