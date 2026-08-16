@@ -1,0 +1,33 @@
+# Phase 0 — Map
+
+Load only during phase 0.
+
+## Scripts (mandatory)
+
+Workspace = opened project root. `AUDIT_PATH` = user path or omit.
+
+```bash
+rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/resolve-root.py" "$WORKSPACE" ${AUDIT_PATH:+"$AUDIT_PATH"}
+```
+
+Exit 2 → STOP. Exit 0 stdout = `ROOT`.
+
+```bash
+rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/inventory.py" "$WORKSPACE" "$ROOT"
+```
+
+Always two args: workspace then ROOT. Exit 2 → STOP. Do not replace with `find` / `wc` / ad-hoc `rg`.
+
+- `file_count == 0` → CLEAN, "no files", stop.
+- Docs-only (`file_count > 0`, empty `top_by_lines`) → continue.
+- Quote: `root`, `file_count`, `profile` (`primary`, `languages`, `test_kinds`), `todo_count`, `todo_by_file` (top), first 5 `top_by_lines` (include `package`), `secret_candidates` (path + `git` only), `workspace_markers`, `entrypoints`. If `docs_truncated` or `complete_todo_list: false`, say so.
+- Later phases must follow `profile.primary`. Do not demand pytest on a Swift app or package.json on an Xcode tree.
+- God files later: group `top_by_lines` by `package`, not one flat list.
+
+`secret_candidates`: existence + git field only. Do not Read those files. Symlink to a secret is a candidate; do not follow.
+
+## After inventory
+
+Entrypoints in JSON: do not full-read yet. Includes App.swift / MainActivity / cmd/*/main.go when present.
+
+Monorepo: if `workspace_markers` non-empty, later god-files are **per package**.
