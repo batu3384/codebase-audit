@@ -104,6 +104,12 @@ def extra_errors() -> list[str]:
         errors.append("is_fs_root(/) should be true")
     if Path("/Users").is_dir() and not is_broad_workspace(Path("/Users")):
         errors.append("/Users should be a broad workspace")
+    if Path("/tmp").exists() and not is_broad_workspace(Path("/tmp")):
+        errors.append("/tmp should be a broad workspace")
+    if Path("/etc").is_dir() and not is_broad_workspace(Path("/etc")):
+        errors.append("/etc should be a broad workspace")
+    if Path("/tmp").exists() and home_ok(Path("/tmp")) is None:
+        errors.append("--home /tmp should be refused")
     if home_ok(Path.home()) is not None:
         errors.append(f"Path.home() should be allowed --home, got {home_ok(Path.home())}")
     if home_ok(Path("/")) is None:
@@ -142,6 +148,7 @@ def extra_errors() -> list[str]:
             "complete_scan": "false",
             "line_count_truncated": 0,
             "todo_skipped_large": 0,
+            "todo_skipped_unreadable": 0,
             "skipped_special": 0,
             "skipped_symlink_dirs": 0,
             "skipped_unreadable": 0,
@@ -637,6 +644,8 @@ def extra_errors() -> list[str]:
             errors.append(f"unread huge.py must not be an orphan, got {orphans}")
         if data.get("skipped_large", 0) < 1:
             errors.append(f"oversized import file should set skipped_large, got {data}")
+        if data.get("cycles_complete") is not False:
+            errors.append(f"truncated import sample should set cycles_complete false, got {data}")
 
     with tempfile.TemporaryDirectory() as td:
         proj = Path(td) / "docscap"
@@ -686,6 +695,10 @@ def extra_errors() -> list[str]:
                 data2 = json.loads(r2.stdout)
                 if data2.get("complete_scan") is not False:
                     errors.append(f"unreadable TODO file should set complete_scan false, got {data2}")
+                if data2.get("todo_skipped_unreadable", 0) < 1:
+                    errors.append(f"unreadable TODO file should set todo_skipped_unreadable, got {data2}")
+                if data2.get("todo_skipped_large", 0) != 0:
+                    errors.append("unreadable TODO must not increment todo_skipped_large")
             finally:
                 os.chmod(locked, 0o644)
         with tempfile.TemporaryDirectory() as td:
@@ -704,6 +717,103 @@ def extra_errors() -> list[str]:
             finally:
                 os.chmod(locked, 0o644)
 
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "docslinks"
+        proj.mkdir()
+        links = "\n".join(f"[x](missing-{i}.md)" for i in range(40))
+        (proj / "README.md").write_text(links + "\n\n`src/ghost.ts`\n")
+        r = run([PY, str(SCRIPTS / "docs-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        promised = [x.get("path") for x in data.get("promised_missing") or []]
+        if "src/ghost.ts" not in promised:
+            errors.append(f"README promised path should survive broken-link cap, got {promised}")
+        if data.get("truncated") is not True:
+            errors.append("40 broken links should set truncated")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "btroot"
+        proj.mkdir()
+        (proj / "README.md").write_text("See `SKILL.md` and `src/app.ts`.\n")
+        r = run([PY, str(SCRIPTS / "docs-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        promised = [x.get("path") for x in data.get("promised_missing") or []]
+        if "SKILL.md" not in promised or "src/app.ts" not in promised:
+            errors.append(f"root-file backtick should be promised, got {promised}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "pyindent"
+        pkg = proj / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text("if TYPE_CHECKING:\n    from .missing import Bar\n")
+        r = run([PY, str(SCRIPTS / "import-sample.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        froms = [u.get("from") for u in data.get("unresolved") or []]
+        if not any("a.py" in (f or "") for f in froms):
+            errors.append(f"indented relative import should be unresolved, got {data.get('unresolved')}")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "envex"
+        proj.mkdir()
+        (proj / ".env.example").write_text("API_KEY=changeme\n")
+        (proj / ".env.local").write_text("SECRET=x\n")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        paths = [s.get("path") for s in data.get("secret_candidates") or []]
+        if ".env.example" in paths:
+            errors.append(".env.example must not be a secret candidate")
+        if ".env.local" not in paths:
+            errors.append(".env.local should remain a secret candidate")
+
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "mtslang"
+        proj.mkdir()
+        (proj / "app.mts").write_text("export {}\n")
+        (proj / "index.mjs").write_text("export {}\n")
+        r = run([PY, str(SCRIPTS / "inventory.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        langs = (data.get("profile") or {}).get("languages") or {}
+        if langs.get("typescript", 0) < 1:
+            errors.append(f".mts should count as typescript, got {langs}")
+        if langs.get("javascript", 0) < 1:
+            errors.append(f".mjs should count as javascript, got {langs}")
+        eps = data.get("entrypoints") or []
+        if "index.mjs" not in eps:
+            errors.append(f"index.mjs should be an entrypoint, got {eps}")
+
+    with tempfile.TemporaryDirectory() as td:
+        outside = Path(td) / "outside_tests"
+        outside.mkdir()
+        for i in range(200):
+            (outside / f"t{i}.py").write_text("x=1\n")
+        proj = Path(td) / "rglob"
+        proj.mkdir()
+        (proj / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (proj / "main.py").write_text("x=1\n")
+        (proj / "tests").symlink_to(outside)
+        r = run([PY, str(SCRIPTS / "runtime-check.py"), str(proj), str(proj)])
+        data = json.loads(r.stdout)
+        kinds = [p.get("kind") for p in data.get("plans") or []]
+        if "pytest" in kinds:
+            errors.append("tests dir symlink must not invent pytest evidence")
+
+    if os.name != "nt":
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "unrmd"
+            proj.mkdir()
+            readme = proj / "README.md"
+            readme.write_text("`src/nope.ts`\n")
+            os.chmod(readme, 0)
+            try:
+                r = run([PY, str(SCRIPTS / "docs-check.py"), str(proj), str(proj)])
+                data = json.loads(r.stdout)
+                if data.get("truncated") is not True:
+                    errors.append(f"unreadable README should set truncated, got {data}")
+                if data.get("promised_missing_complete") is not False:
+                    errors.append("unreadable README should set promised_missing_complete false")
+            finally:
+                os.chmod(readme, 0o644)
+
     walk_src = (SCRIPTS / "walk.py").read_text(encoding="utf-8")
     if "path.read_bytes()" in walk_src:
         errors.append("bounded_read_text must not load the whole file via read_bytes()")
@@ -711,6 +821,8 @@ def extra_errors() -> list[str]:
         errors.append("promises haystack must use MAX_HAYSTACK_BYTES")
     if "deadline = time.monotonic()" not in (SCRIPTS / "run.py").read_text(encoding="utf-8"):
         errors.append("run.py must use a shared monotonic deadline")
+    if "rglob(" in (SCRIPTS / "runtime-check.py").read_text(encoding="utf-8"):
+        errors.append("runtime-check must not rglob (follows dir symlinks)")
 
     src = (SCRIPTS / "check_extra.py").read_text(encoding="utf-8")
     if "timeout=" not in src.split("def run", 1)[-1][:400]:

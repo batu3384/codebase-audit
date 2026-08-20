@@ -9,7 +9,7 @@ description: >
   not for OWASP/SAST vulnerability hunting, not for applying fixes.
 license: MIT
 metadata:
-  version: "1.3.4"
+  version: "1.3.5"
   homepage: https://github.com/batu3384/codebase-audit
   keywords: architecture audit codebase maintainability structure
 ---
@@ -54,7 +54,7 @@ Default is **static**. `--runtime` is `run.py --run`: **all** `class: executable
 - Do not paste secret values. **Do not Read secret-file bodies.**
 - **One-shot measure.** Workspace = opened project, never $HOME or / (Windows: never a drive root or UNC share root). Run `scripts/run.py` **once** (optional path; `--run` only if user `--runtime`). Do not re-run `resolve-root.py`, `inventory.py`, `docs-check.py`, `promises.py`, `import-sample.py`, `stub-scan.py`, or `runtime-check.py` unless that `run.py` key is missing. Do not substitute `find`/`wc`/`rg`. Bundle keys match those script stems. `run.py` `incomplete` = schema/sandbox/child error (exit 2), not a coverage flag.
 - Shell: `rtk ` or `rtk proxy ` when `rtk` exists; else `python3` (`py -3` on Windows). Load `references/<phase>.md` only when that phase starts. Do not Read the Cursor canvas skill until phase 5 writes a `.canvas.tsx`.
-- Exit 2 from any script, or `run.py` `incomplete` → STOP. **No verdict** unless the report quotes those stdout. Missing → incomplete, not CLEAN. `*_complete: false` / `haystack_truncated` / `complete_scan: false` / `walk_complete: false` → do not claim absence of that finding type; not CLEAN on that evidence.
+- Exit 2 from any script, or `run.py` `incomplete` → STOP. **No verdict** unless the report quotes those stdout. Missing → incomplete, not CLEAN. `*_complete: false` / `truncated: true` / `haystack_truncated` / `complete_scan: false` / `walk_complete: false` → do not claim absence of that finding type; not CLEAN on that evidence.
 - Secret severity from inventory `git` field: `tracked` Critical; `untracked` Major; `outside` Major (symlink out of tree, do not follow); `ignored` / `no-git` Info. Local ignored `.env` is not BLOCK.
 - **Critical and Major are never truncated.** 40 cap = Minor/Trivial/Info only. Do not skip phases 0–5 to save tokens. Do not thin the markdown, JSON findings, or canvas.
 

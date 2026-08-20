@@ -23,17 +23,31 @@ def is_fs_root(path: Path) -> bool:
     return p.parent == p
 
 
+def _is_os_top_dir(path: Path) -> bool:
+    """True for `/tmp`, `/etc`, `/Users`, Darwin `/private/tmp`, Windows equivalents."""
+    try:
+        p = path.expanduser().resolve()
+    except OSError:
+        return True
+    if is_fs_root(p):
+        return True
+    parent = p.parent
+    if is_fs_root(parent) and (p.name in POSIX_TOP or p.name.lower() in WIN_TOP):
+        return True
+    # /tmp -> /private/tmp, /etc -> /private/etc
+    if parent.name == "private" and is_fs_root(parent.parent) and p.name in POSIX_TOP:
+        return True
+    return False
+
+
 def is_broad_workspace(ws: Path) -> bool:
     try:
         ws = ws.expanduser().resolve()
     except OSError:
         return True
-    if is_fs_root(ws) or ws == Path.home():
+    if ws == Path.home():
         return True
-    parent = ws.parent
-    if is_fs_root(parent) and (ws.name in POSIX_TOP or ws.name.lower() in WIN_TOP):
-        return True
-    return False
+    return _is_os_top_dir(ws)
 
 
 def home_ok(home: Path) -> str | None:
@@ -44,8 +58,7 @@ def home_ok(home: Path) -> str | None:
         return f"--home unreadable: {home} ({e})"
     if is_fs_root(h):
         return f"--home is filesystem root: {h}"
-    parent = h.parent
-    if is_fs_root(parent) and (h.name in POSIX_TOP or h.name.lower() in WIN_TOP):
+    if h != Path.home() and _is_os_top_dir(h):
         return f"--home too broad: {h}"
     return None
 

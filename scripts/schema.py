@@ -25,6 +25,7 @@ REQUIRED: dict[str, frozenset[str]] = {
             "complete_scan",
             "line_count_truncated",
             "todo_skipped_large",
+            "todo_skipped_unreadable",
             "entrypoints_truncated",
         }
     )
@@ -120,6 +121,7 @@ INT_NONNEG = frozenset(
         "skipped_unreadable",
         "line_count_truncated",
         "todo_skipped_large",
+        "todo_skipped_unreadable",
         "hit_count",
         "todo_count",
         "unreadable",

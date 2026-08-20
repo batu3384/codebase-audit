@@ -117,7 +117,7 @@ def file_edges(path: Path, root: Path) -> tuple[list[tuple[str, str, int, str]],
                 out.append((rel, dest_rel, i, kind))
     elif ext in PY_EXT:
         for i, line in enumerate(lines, 1):
-            m = PY_FROM_REL.match(line)
+            m = PY_FROM_REL.match(line.lstrip())
             if not m:
                 continue
             spec = m.group(2) or m.group(3).split(",")[0].strip()
@@ -279,7 +279,7 @@ def main() -> int:
         "unresolved_count": unresolved_n,
         "unresolved_complete": not truncated and unresolved_n <= 40,
         "cycles": cyc,
-        "cycles_complete": len(cyc) < 8,
+        "cycles_complete": not truncated and len(cyc) < 8,
         "orphans": orphans[:40],
         "orphans_count": orphan_n,
         "orphans_complete": not truncated and orphan_n <= 40,

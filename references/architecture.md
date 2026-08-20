@@ -16,7 +16,7 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/import-sample.py"
 
 JSON: `n`, `files`, `sample`, `unresolved`, `unresolved_complete`, `cycles`, `orphans`, `orphans_complete`, `layer_hints`, `hubs`, `complete_graph: false`. Kanıt must include `sample: N edges, M files`.
 
-- `cycles` non-empty → Major. Wording: "cycle in relative js/py/go graph", never "repo has no cycles".
+- `cycles` non-empty → Major. Wording: "cycle in relative js/py/go graph", never "repo has no cycles". **`cycles_complete: false` / `truncated: true` → do not claim the cycle list is exhaustive.**
 - `unresolved` → Major if on an entrypoint path, else Minor. **`unresolved_complete: false` → do not claim the unresolved list is exhaustive.**
 - `orphans` (js/py/go never imported, not entrypoint/test/`__init__.py`) → Maintainability, Minor. Swift: ignore, `orphan_scope` says so.
 - **`orphans_complete: false` / `truncated: true` → do not emit orphan, layer_hints, or hub findings.** Partial graph or a 40-cap list would invent “only these dead files”.

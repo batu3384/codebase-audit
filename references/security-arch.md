@@ -20,7 +20,7 @@ Use `inventory.py` `secret_candidates` (`path` + `git` only). Do not Read / `cat
 | `ignored` | Info (local `.env` is normal) |
 | `no-git` | Info |
 
-Do not BLOCK a repo solely because a gitignored `.env` exists.
+Do not BLOCK a repo solely because a gitignored `.env` exists. `.env.example` / `.env.sample` / `.env.template` are not secret candidates.
 
 ## Look for
 

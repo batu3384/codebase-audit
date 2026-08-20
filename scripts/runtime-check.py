@@ -7,6 +7,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -102,6 +103,32 @@ def python_project(pkg: Path, tree: Path) -> bool:
     return False
 
 
+def _dir_has_in_tree_py(start: Path, tree: Path) -> bool:
+    """True if a regular .py exists under start. Does not follow dir symlinks."""
+    try:
+        st = start.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        return False
+    for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
+        base = Path(dirpath)
+        keep: list[str] = []
+        for d in dirnames:
+            child = base / d
+            try:
+                if child.is_symlink():
+                    continue
+            except OSError:
+                continue
+            keep.append(d)
+        dirnames[:] = keep
+        for fn in filenames:
+            if fn.endswith(".py") and readable_in_tree(base / fn, tree):
+                return True
+    return False
+
+
 def pytest_evidence(pkg: Path, tree: Path) -> bool:
     if readable_in_tree(pkg / "pytest.ini", tree) or readable_in_tree(pkg / "conftest.py", tree):
         return True
@@ -109,8 +136,7 @@ def pytest_evidence(pkg: Path, tree: Path) -> bool:
     read = bounded_read_text(pyproject, tree)
     if read.text and "[tool.pytest" in read.text:
         return True
-    tests = pkg / "tests"
-    if tests.is_dir() and any(readable_in_tree(p, tree) for p in tests.rglob("*.py")):
+    if _dir_has_in_tree_py(pkg / "tests", tree):
         return True
     if any(readable_in_tree(p, tree) for p in pkg.glob("test_*.py")) or any(
         readable_in_tree(p, tree) for p in pkg.glob("*_test.py")

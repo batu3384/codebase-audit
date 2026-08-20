@@ -11,7 +11,7 @@ rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/docs-check.py" "$
 ```
 
 - `broken_links[]` → Docs. Minor. Major if `from` is the root README **and** href is an install/getting-started path.
-- `promised_missing[]` (README backtick `src/...` that does not exist) → Docs, Major if it is advertised as the main entry; else Minor.
+- `promised_missing[]` (README backtick `src/...` or root files like `SKILL.md` that do not exist) → Docs, Major if it is advertised as the main entry; else Minor.
 - `promised_missing_complete: false` / `truncated: true` / `skipped_large` > 0 → do not claim docs-path completeness; not CLEAN on that evidence. Placeholder paths (`YYYY-MM-DD`) are ignored.
 - Do not invent product features from headings. No NLP backlog. Only missing paths the docs already named.
 

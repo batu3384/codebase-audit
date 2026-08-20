@@ -123,6 +123,8 @@ LANG_FROM_EXT = {
     ".jsx": "javascript",
     ".mjs": "javascript",
     ".cjs": "javascript",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".go": "go",
     ".rs": "rust",
     ".swift": "swift",
@@ -157,6 +159,7 @@ SECRET_NAMES = {
     "id_ecdsa",
 }
 SECRET_PREFIXES = (".env.",)
+SECRET_TEMPLATE_NAMES = {".env.example", ".env.sample", ".env.template"}
 SECRET_SUFFIXES = (".pem", ".p12", ".pfx", ".keystore", ".key")
 
 GENERATED_MARKERS = (
@@ -207,6 +210,10 @@ ENTRY_NAMES = {
     "index.js",
     "index.tsx",
     "index.jsx",
+    "index.mjs",
+    "index.cjs",
+    "index.mts",
+    "index.cts",
     "main.ts",
     "main.js",
     "main.go",
@@ -442,6 +449,8 @@ def find_xcode_bundles(root: Path) -> list[str]:
 
 
 def is_secret_name(name: str) -> bool:
+    if name in SECRET_TEMPLATE_NAMES:
+        return False
     if name in SECRET_NAMES:
         return True
     if name.startswith(SECRET_PREFIXES):
@@ -601,10 +610,10 @@ def line_count(path: Path) -> int:
     return n
 
 
-def scan_todo(path: Path, rel: str, nlines: int, root: Path) -> tuple[int, list[str], bool]:
+def scan_todo(path: Path, rel: str, nlines: int, root: Path) -> tuple[int, list[str], str | None]:
     read = bounded_read_text(path, root)
     if read.skip_reason:
-        return 0, [], True
+        return 0, [], read.skip_reason
     count = 0
     samples: list[str] = []
     lines = (read.text or "").splitlines()
@@ -616,7 +625,7 @@ def scan_todo(path: Path, rel: str, nlines: int, root: Path) -> tuple[int, list[
         take = total <= 800 or i <= 80 or i > total - 40
         if take and len(samples) < 20:
             samples.append(f"{rel}:{i}:{redact(line.strip())}")
-    return count, samples, False
+    return count, samples, None
 
 
 def todo_scanable(path: Path) -> bool:

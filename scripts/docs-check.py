@@ -12,7 +12,7 @@ from walk import bounded_read_text, coverage_json, is_generated, readable_in_tre
 
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 BACKTICK_PATH = re.compile(
-    r"`((?:[A-Za-z0-9_.-]+/)+\.?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`"
+    r"`((?:[A-Za-z0-9_.-]+/)*\.?[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)`"
 )
 SKIP_LINK = re.compile(r"^(https?://|mailto:|tel:|#|\{)")
 PLACEHOLDER_PATH = re.compile(r"YYYY|MM-DD|<[^>]+>|\{[^}]+\}")
@@ -68,6 +68,18 @@ def main() -> int:
         md_scanned += 1
         text = read.text or ""
         rel = str(p.relative_to(root))
+        if want_promised and p.name.upper().startswith("README"):
+            for m in BACKTICK_PATH.finditer(text):
+                spec = m.group(1)
+                if "://" in spec or spec.startswith("www."):
+                    continue
+                if PLACEHOLDER_PATH.search(spec):
+                    continue
+                if not (root / spec).exists():
+                    promised_missing.append({"from": rel, "path": spec})
+                    if len(promised_missing) >= 20:
+                        promised_cap = True
+                        break
         for m in MD_LINK.finditer(text):
             raw = m.group(1).strip()
             if raw.startswith("<") and "://" not in raw:
@@ -83,23 +95,8 @@ def main() -> int:
                 target.relative_to(root.resolve())
             except ValueError:
                 continue
-            if not target.exists():
+            if not target.exists() and len(broken) < 40:
                 broken.append({"from": rel, "href": href})
-                if len(broken) >= 40:
-                    return
-        if not want_promised or not p.name.upper().startswith("README"):
-            return
-        for m in BACKTICK_PATH.finditer(text):
-            spec = m.group(1)
-            if "://" in spec or spec.startswith("www."):
-                continue
-            if PLACEHOLDER_PATH.search(spec):
-                continue
-            if not (root / spec).exists():
-                promised_missing.append({"from": rel, "path": spec})
-                if len(promised_missing) >= 20:
-                    promised_cap = True
-                    return
 
     for i, p in enumerate(readmes):
         md_seen += 1
@@ -107,8 +104,6 @@ def main() -> int:
             readme_cap = True
             continue
         scan_one(p, want_promised=True)
-        if len(broken) >= 40:
-            break
 
     if len(broken) < 40:
         for i, p in enumerate(others):
@@ -144,6 +139,7 @@ def main() -> int:
             or len(broken) >= 40
             or promised_cap
             or skipped_large > 0
+            or unreadable > 0
             or not cover.walk_complete
         ),
         **coverage_json(cover),

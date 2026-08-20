@@ -162,6 +162,8 @@ git pull
 
 ## Changelog
 
+**v1.3.5** — README promised-paths survive the 40-broken-link cap; indented Python relative imports; `.env.example`/`.sample`/`.template` not secret candidates; macOS `/private/tmp` `/etc` sandbox; `tests/` symlink not rglob'd; `cycles_complete` respects truncated; docs `truncated` includes unreadable; `todo_skipped_unreadable`; root-file backticks; `.mts`/`.cts` profile + `index.mjs`.
+
 **v1.3.4** — Import/docs/stub/TODO skip paths fail complete flags; README promised-paths ignore the 200-md cap; `entrypoints_truncated`; `read_skipped_unreadable` not clobbered by walk coverage; bounded reader caps body bytes; haystack 8 MB total; `run.py` shared monotonic budget.
 
 **v1.3.3** — Bounded manifest reads (`bounded_read_text`); promises/inventory/runtime share 2 MB cap; `skipped_symlink_unscanned` fails `walk_complete`; stub truncation fails `complete_scan`; secret candidate cap (200); resolve-root 30s timeout; self-check env probe uses bounded helper.

@@ -163,6 +163,7 @@ def main() -> int:
     test_files: list[str] = []
     line_count_truncated = 0
     todo_skipped_large = 0
+    todo_skipped_unreadable = 0
 
     for p in files:
         rel = str(p.relative_to(root))
@@ -199,9 +200,11 @@ def main() -> int:
             pkg = nearest_package(p, root)
             sources.append((n, rel, pkg))
         if want_todo:
-            c, samp, skipped_large = scan_todo(p, rel, n, root)
-            if skipped_large:
+            c, samp, skip = scan_todo(p, rel, n, root)
+            if skip == "large":
                 todo_skipped_large += 1
+            elif skip:
+                todo_skipped_unreadable += 1
             todo_count += c
             if c:
                 todo_per_file[rel] += c
@@ -273,10 +276,12 @@ def main() -> int:
         **coverage_json(cover),
         "line_count_truncated": line_count_truncated,
         "todo_skipped_large": todo_skipped_large,
+        "todo_skipped_unreadable": todo_skipped_unreadable,
         "complete_scan": (
             cover.walk_complete
             and line_count_truncated == 0
             and todo_skipped_large == 0
+            and todo_skipped_unreadable == 0
             and not secret_candidates_truncated
             and len(entrypoints) <= MAX_ENTRYPOINTS
         ),
