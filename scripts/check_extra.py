@@ -824,6 +824,19 @@ def extra_errors() -> list[str]:
     if "rglob(" in (SCRIPTS / "runtime-check.py").read_text(encoding="utf-8"):
         errors.append("runtime-check must not rglob (follows dir symlinks)")
 
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "meas"
+        proj.mkdir()
+        (proj / "a.py").write_text("x=1\n")
+        r = run([PY, str(SCRIPTS / "run.py"), str(proj)])
+        if r.returncode != 0:
+            errors.append(f"run.py measurement probe failed: {r.stderr}")
+        else:
+            data = json.loads(r.stdout)
+            meas = data.get("measurement")
+            if not isinstance(meas, dict) or meas.get("complete") is not True:
+                errors.append(f"run.py measurement incomplete: {meas}")
+
     src = (SCRIPTS / "check_extra.py").read_text(encoding="utf-8")
     if "timeout=" not in src.split("def run", 1)[-1][:400]:
         errors.append("check_extra.run must pass subprocess timeout")

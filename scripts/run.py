@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from schema import validate_child
 
 SCRIPTS = Path(__file__).resolve().parent
 PY = sys.executable
+SKILL_VERSION = "1.3.6"
 
 ORDER = (
     "inventory.py",
@@ -49,6 +51,18 @@ def run_one(name: str, args: list[str], timeout: float) -> dict:
     if not isinstance(blob, dict):
         return {"error": "result is not an object", "exit": 2}
     return blob
+
+
+def bundle_fingerprint(out: dict) -> str:
+    parts: list[str] = []
+    for name in ORDER:
+        stem = name.replace(".py", "")
+        blob = out.get(stem)
+        if not isinstance(blob, dict):
+            parts.append(f"{stem}:missing")
+            continue
+        parts.append(f"{stem}:{blob.get('root', '')}")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
 def main() -> int:
@@ -97,8 +111,20 @@ def main() -> int:
         if err:
             out["incomplete"] = True
             out["incomplete_reason"] = err
+            out["measurement"] = {
+                "skill_version": SKILL_VERSION,
+                "fingerprint": bundle_fingerprint(out),
+                "keys": [n.replace(".py", "") for n in ORDER],
+                "complete": False,
+            }
             print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
             return 2
+    out["measurement"] = {
+        "skill_version": SKILL_VERSION,
+        "fingerprint": bundle_fingerprint(out),
+        "keys": [n.replace(".py", "") for n in ORDER],
+        "complete": True,
+    }
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
     return 0
 

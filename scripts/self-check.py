@@ -462,6 +462,13 @@ def main() -> int:
                 errors.append("run.py inventory empty")
             if "\n  " in r.stdout[:240]:
                 errors.append("run.py should print compact JSON")
+            meas = data.get("measurement")
+            if not isinstance(meas, dict) or meas.get("complete") is not True:
+                errors.append(f"run.py missing measurement.complete, got {meas}")
+            if not str(meas.get("fingerprint") or ""):
+                errors.append("run.py measurement.fingerprint empty")
+            if meas.get("skill_version") != "1.3.6":
+                errors.append(f"run.py skill_version mismatch: {meas.get('skill_version')}")
 
     with tempfile.TemporaryDirectory() as td:
         ws = Path(td) / "driftws"

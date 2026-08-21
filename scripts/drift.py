@@ -117,6 +117,14 @@ def load_sidecar(path: Path) -> dict:
             }
         )
     data["findings"] = clean
+    meas = data.get("measurement")
+    if meas is not None:
+        if not isinstance(meas, dict):
+            raise ValueError("measurement must be an object")
+        ver = str(meas.get("skill_version") or "").strip()
+        fp = str(meas.get("fingerprint") or "").strip()
+        if not ver or not fp:
+            raise ValueError("measurement needs skill_version and fingerprint")
     return data
 
 

@@ -60,9 +60,10 @@ Türkçe. Letters: **ı, ğ, ü, ş, ö, ç, İ**. Path, `CA-001` English. Secre
 
 - Tarih: YYYY-MM-DD
 - Kapsam: <ROOT> (file path given → parent directory)
-- Runtime: static | --runtime
-- Sonuç: BLOKE | SORUNLU | TEMİZ
-- Envanter: file_count, todo_count (run.py inventory)
+- Ölçüm: <measurement.skill_version> / <measurement.fingerprint> (run.py stdout — required)
+- Runtime: static | --runtime (latter only if user requested)
+- Sonuç: BLOKE | SORUNLU | TEMİZ | EKSİK
+- Envanter: file_count, todo_count (bundle inventory)
 
 ## Özet
 
@@ -99,10 +100,12 @@ Each line: ID + one Turkish sentence (what to do). Same as `Yön`, not a patch.
 Write **before** `drift.py`. Compact JSON (`separators=(',', ':')`). No pretty-print. No Kanıt, no secret values, no finding bodies. `id` is this-run only. English enums only.
 
 ```json
-{"schema":1,"skill":"codebase-audit","date":"YYYY-MM-DD","root":"<ROOT>","verdict":"BLOCK","runtime":"static","findings":[{"id":"CA-001","severity":"Critical","category":"Maintainability","path":"src/foo.py"}]}
+{"schema":1,"skill":"codebase-audit","date":"YYYY-MM-DD","root":"<ROOT>","runtime":"static","measurement":{"skill_version":"1.3.6","fingerprint":"abc123"},"verdict":"BLOCK","findings":[{"id":"CA-001","severity":"Critical","category":"Maintainability","path":"src/foo.py"}]}
 ```
 
-`path` may include `:line`; fingerprint strips `:\d+$`. Duplicate fingerprints in one file collapse to one. `date` must match the filename `YYYY-MM-DD`. `root` is required; `drift.py` only compares sidecars with the same canonical root (`skipped_root`).
+`measurement` must copy `skill_version` + `fingerprint` from bundle stdout (proves one-shot measure). Missing → EKSİK.
+
+`path` may include `:line`; drift fingerprint strips `:\d+$`. Duplicate finding fingerprints in one file collapse to one. `date` must match filename `YYYY-MM-DD`. `root` required; `drift.py` skips prior sidecars with different root (`skipped_root`).
 
 ```bash
 rtk proxy python3 "$HOME/.agents/skills/codebase-audit/scripts/drift.py" "$WORKSPACE" "$WORKSPACE/docs/codebase-audit/YYYY-MM-DD.json"
@@ -158,7 +161,7 @@ Now Read `~/.cursor/skills-cursor/canvas/SKILL.md`. Prefer: `Stack`, `H1`, `H2`,
 6. Tane tane `CollapsibleSection` — Kritik `defaultOpen`. Labels **Kanıt** / **Neden** / **Yön**. Do not drop sections to save tokens.
 7. `H2` `Önerilen sıra` — en fazla 5 satır, CA-NNN + cümle.
 8. Drift varsa `Text size="small"`: önceki dosya adı + yeni/gitti/aynı **sayıları** (`drift.py` counts). CA-NNN kıyaslama yok.
-9. `Text size="small" tone="tertiary"`: `Kaynak: run.py + drift.py sidecar`.
+9. `Text size="small" tone="tertiary"`: `Ölçüm: <version>/<fingerprint> · Kaynak: run.py + drift.py`.
 
 ## Chat (after md + json exist)
 

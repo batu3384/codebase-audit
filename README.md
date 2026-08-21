@@ -131,7 +131,7 @@ Canvas path pattern: `~/.cursor/projects/<workspace-slug>/canvases/codebase-audi
 ```text
 codebase-audit/
 ├── SKILL.md              # skill contract (hosts load this)
-├── references/           # phase guides (on demand)
+├── references/           # phase guides + flags.md (coverage SSOT)
 ├── scripts/
 │   ├── run.py            # one-shot bundle
 │   ├── schema.py         # child JSON contract
@@ -161,6 +161,8 @@ git pull
 ```
 
 ## Changelog
+
+**v1.3.6** — Bundle `measurement` (version + fingerprint) required in report/sidecar; `references/flags.md` SSOT for coverage flags; phase refs drop per-script fallback bash; stricter `--runtime` gate; import-graph Swift/Kotlin scope explicit.
 
 **v1.3.5** — README promised-paths survive the 40-broken-link cap; indented Python relative imports; `.env.example`/`.sample`/`.template` not secret candidates; macOS `/private/tmp` `/etc` sandbox; `tests/` symlink not rglob'd; `cycles_complete` respects truncated; docs `truncated` includes unreadable; `todo_skipped_unreadable`; root-file backticks; `.mts`/`.cts` profile + `index.mjs`.
 
